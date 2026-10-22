@@ -1,0 +1,157 @@
+# ============================================================
+# SENTINEL BACKEND — .gitignore
+# Python · Flask · Vercel · Secrets · SQLite · IDE · OS
+# ============================================================
+
+# ---------- ENV / SECRETS ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+secrets.json
+credentials.json
+
+# ---------- PYTHON ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---------- VIRTUAL ENVIRONMENTS ----------
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# ---------- TESTES / COBERTURA ----------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+nosetests.xml
+
+# ---------- TYPE CHECKERS / LINTERS ----------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+.pyre/
+*.pyright/
+
+# ---------- FLASK ----------
+instance/
+.webassets-cache
+flask_session/
+.flaskenv
+
+# ---------- BASE DE DADOS LOCAL ----------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+database/
+data/
+*.dump
+*.backup
+*.bak
+
+# ---------- LOGS ----------
+*.log
+logs/
+log/
+*.log.*
+
+# ---------- UPLOADS / TEMP ----------
+uploads/
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# ---------- VERCEL ----------
+.vercel
+.vercelignore
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# ---------- SISTEMA OPERATIVO ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------- NODE (se usares tooling) ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- DOCKER ----------
+.dockerignore
+Dockerfile.bak
+docker-compose.override.yml
+
+# ---------- SCRIPTS LOCAIS ----------
+start.ps1
+start.bat
+run.ps1
+run.bat
+dev.sh
+dev.ps1
+
+# ---------- CACHE DIVERSO ----------
+.cache/
+.pytest_cache/
+*.pyc
+.cpython-*

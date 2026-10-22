@@ -1,0 +1,40 @@
+/* ============================================================
+   SENTINEL — Admin Console
+   Classes específicas que se sobrepõem ao dashboard.css
+   ============================================================ */
+
+/* Card admin com borda purple no topo */
+.admin-card::before {
+  background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.5), transparent);
+}
+
+/* Tab do admin — mantém o estilo do protótipo */
+.admin-tab {
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6b7280;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.admin-tab:hover {
+  color: #e2e8f0;
+  background: rgba(17, 21, 30, 0.8);
+}
+.admin-tab.active {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+/* Ativa o fundo preto no dashboard */
+body:has(.dashboard-root) {
+  background-color: #070709 !important;
+}

@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="pt-PT" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0b0f" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+    <!-- ============================================================
+         PRIMARY SEO
+    ============================================================ -->
+    <title>Sentinel — Automated Application Security</title>
+    <meta name="description" content="Deteta vulnerabilidades web automaticamente. OWASP Top 10 coberto. 13 módulos de deteção, relatórios acionáveis, scans em minutos." />
+    <meta name="keywords" content="segurança web, pentest automático, OWASP Top 10, DAST, vulnerabilidades, scan de segurança, cibersegurança, SENTINEL" />
+    <meta name="author" content="Sentinel" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow" />
+    <link rel="canonical" href="https://sentinel.app/" />
+
+    <!-- ============================================================
+         OPEN GRAPH
+    ============================================================ -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SENTINEL" />
+    <meta property="og:title" content="Sentinel — Automated Application Security" />
+    <meta property="og:description" content="Deteta vulnerabilidades web automaticamente. OWASP Top 10 coberto. 13 módulos de deteção." />
+    <meta property="og:url" content="https://sentinel.app/" />
+    <meta property="og:image" content="https://sentinel.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="SENTINEL — Automated Application Security" />
+    <meta property="og:locale" content="pt_PT" />
+
+    <!-- ============================================================
+         TWITTER CARD
+    ============================================================ -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@sentinelapp" />
+    <meta name="twitter:creator" content="@sentinelapp" />
+    <meta name="twitter:title" content="Sentinel — Automated Application Security" />
+    <meta name="twitter:description" content="Deteta vulnerabilidades web automaticamente. OWASP Top 10 coberto." />
+    <meta name="twitter:image" content="https://sentinel.app/og-image.png" />
+
+    <!-- ============================================================
+         FAVICONS
+    ============================================================ -->
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/logo.svg" color="#00d97e" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- ============================================================
+         PERFORMANCE — preconnect & fonts
+    ============================================================ -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+    <!-- ============================================================
+         JSON-LD STRUCTURED DATA
+    ============================================================ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Sentinel",
+      "applicationCategory": "SecurityApplication",
+      "operatingSystem": "Web",
+      "description": "Plataforma de segurança de aplicações web com deteção automatizada de vulnerabilidades OWASP Top 10.",
+      "url": "https://sentinel.app/",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "EUR"
+      },
+      "creator": {
+        "@type": "Organization",
+        "name": "Sentinel",
+        "url": "https://sentinel.app/"
+      }
+    }
+    </script>
+
+    <!-- ============================================================
+         INLINE FALLBACK LOADING — design system + loader
+    ============================================================ -->
+    <style>
+      /* ---------- Design tokens ---------- */
+      :root {
+        /* Backgrounds */
+        --bg-primary: #0a0b0f;
+        --bg-secondary: #12141a;
+        --bg-elevated: #171a22;
+
+        /* Text */
+        --text-primary: #eef1f6;
+        --text-secondary: #a8b0bd;
+        --text-muted: #6b7280;
+
+        /* Accent */
+        --accent: #00d97e;
+        --accent-hover: #00f08b;
+        --accent-glow: rgba(0, 217, 126, 0.18);
+        --accent-soft: rgba(0, 217, 126, 0.08);
+
+        /* Borders & surfaces */
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border-strong: rgba(255, 255, 255, 0.12);
+
+        /* Typography */
+        --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+        --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+
+        /* Spacing scale */
+        --space-xs: 0.5rem;
+        --space-sm: 0.75rem;
+        --space-md: 1rem;
+        --space-lg: 1.5rem;
+        --space-xl: 2.5rem;
+        --space-2xl: 4rem;
+
+        /* Radii */
+        --radius-sm: 6px;
+        --radius-md: 10px;
+        --radius-lg: 16px;
+        --radius-full: 9999px;
+
+        /* Transitions */
+        --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+        --ease-breath: cubic-bezier(0.45, 0, 0.55, 1);
+        --dur-fast: 150ms;
+        --dur-base: 300ms;
+        --dur-slow: 2400ms;
+      }
+
+      /* ---------- Reset ---------- */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+
+      /* ---------- Base body ---------- */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+        min-height: 100dvh;
+
+        background:
+          radial-gradient(ellipse 80% 50% at 50% -10%, #14161d 0%, transparent 60%),
+          radial-gradient(ellipse 60% 40% at 50% 110%, #0d1017 0%, transparent 55%),
+          var(--bg-primary);
+
+        color: var(--text-primary);
+        font-family: var(--font-sans);
+        font-size: 16px;
+        line-height: 1.6;
+        font-feature-settings: 'cv11', 'ss01';
+        font-variant-ligatures: contextual;
+
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+
+        overflow-x: hidden;
+      }
+
+      /* ---------- Loader (only when #root is empty) ---------- */
+      #root:empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        min-height: 100dvh;
+        flex-direction: column;
+        gap: var(--space-xl);
+        padding: var(--space-xl);
+        text-align: center;
+      }
+
+      /* Brand mark */
+      #root:empty::before {
+        content: 'SENTINEL';
+        display: block;
+        font-family: var(--font-mono);
+        font-size: clamp(1.25rem, 4vw, 1.75rem);
+        font-weight: 600;
+        letter-spacing: 0.6em;
+        padding-left: 0.6em; /* compensa letter-spacing final */
+        color: var(--accent);
+        text-shadow:
+          0 0 12px var(--accent-glow),
+          0 0 40px rgba(0, 217, 126, 0.25),
+          0 0 80px rgba(0, 217, 126, 0.1);
+        animation: brandBreath var(--dur-slow) var(--ease-breath) infinite;
+      }
+
+      /* Progress bar + status text via extra wrapper trick */
+      /* Como ::after é limitado, usamos a linha gradiente como "bar" */
+      #root:empty::after {
+        content: '';
+        display: block;
+        width: 120px;
+        height: 2px;
+        border-radius: var(--radius-full);
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          var(--accent) 50%,
+          transparent 100%
+        );
+        box-shadow: 0 0 16px var(--accent-glow);
+        opacity: 0.8;
+        animation:
+          barSlide 2.4s var(--ease-smooth) infinite,
+          barPulse 2.4s var(--ease-breath) infinite;
+      }
+
+      /* ---------- Keyframes ---------- */
+      @keyframes brandBreath {
+        0%, 100% {
+          opacity: 0.9;
+          filter: brightness(1);
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.45;
+          filter: brightness(0.85);
+          transform: scale(0.985);
+        }
+      }
+
+      @keyframes barSlide {
+        0% { transform: translateX(-60px); }
+        50% { transform: translateX(0); }
+        100% { transform: translateX(60px); }
+      }
+
+      @keyframes barPulse {
+        0%, 100% { width: 80px; opacity: 0.9; }
+        50% { width: 140px; opacity: 0.5; }
+      }
+
+      /* ---------- Reduced motion ---------- */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+        #root:empty::before,
+        #root:empty::after {
+          animation: none;
+          opacity: 0.9;
+        }
+      }
+
+      /* ---------- Selection ---------- */
+      ::selection {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      /* ---------- Scrollbar (WebKit) ---------- */
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--bg-primary);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--bg-elevated);
+        border-radius: var(--radius-full);
+        border: 2px solid var(--bg-primary);
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #232734;
+      }
+
+      /* ---------- Focus visible ---------- */
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+        border-radius: var(--radius-sm);
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <noscript>
+      <div
+        style="
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+          padding: 2rem;
+          font-family: 'Inter', system-ui, sans-serif;
+          text-align: center;
+          color: #eef1f6;
+          background: #0a0b0f;
+        "
+      >
+        <div style="max-width: 420px;">
+          <div
+            style="
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 1.5rem;
+              font-weight: 600;
+              letter-spacing: 0.5em;
+              padding-left: 0.5em;
+              color: #00d97e;
+              margin-bottom: 1.5rem;
+            "
+          >
+            SENTINEL
+          </div>
+          <h1 style="font-size: 1.25rem; font-weight: 600; margin: 0 0 0.75rem;">
+            JavaScript está desativado
+          </h1>
+          <p style="color: #a8b0bd; font-size: 1rem; margin: 0 0 0.5rem; line-height: 1.6;">
+            Precisas de ativar o JavaScript para usar esta plataforma.
+          </p>
+          <p style="color: #6b7280; font-size: 0.875rem; margin: 0; line-height: 1.6;">
+            Ativa o JavaScript nas definições do teu navegador e recarrega a página.
+          </p>
+        </div>
+      </div>
+    </noscript>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

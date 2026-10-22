@@ -1,0 +1,30 @@
+{
+  "name": "Sentinel — Automated Application Security",
+  "short_name": "SENTINEL",
+  "description": "Deteta vulnerabilidades web automaticamente. OWASP Top 10 coberto.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070709",
+  "theme_color": "#00FF66",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["security", "productivity", "developer"],
+  "lang": "pt-PT"
+}
