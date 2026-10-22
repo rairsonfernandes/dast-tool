@@ -46,3 +46,13 @@ Thumbs.db
 .idea/
 *.swp
 *.bak
+# Build artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Backups
+pages_backup/
+
+# Vídeo grande
+frontend/public/video/demo.mp4
