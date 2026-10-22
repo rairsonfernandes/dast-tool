@@ -1,16 +1,4 @@
 """Deteção de SQL Injection.
-
-Estratégia (por ordem de confiança):
-1. Error-based confirmado: a resposta contém mensagem de erro SQL
-   que NÃO aparece com valor de controlo equivalente (diferencial).
-2. Boolean-based: respostas para condição verdadeira vs falsa diferem
-   de forma consistente, e essa diferença não ocorre nos controlos.
-3. Status-based: o payload provoca mudança de status que NÃO acontece
-   com valor válido nem com valor inválido não-SQL (mesmo parâmetro).
-
-Cada parâmetro tem as suas próprias referências (válida + controlos).
-Distingue "erro SQL confirmado" de "mudança de comportamento suspeita".
-Usa cookies e headers extra do ScanConfig (auth).
 """
 import aiohttp
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
