@@ -10,9 +10,14 @@ const STEPS = [
 export function DemoVideo() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [failed, setFailed] = useState(false);
+  
+  // Forçamos a falha como 'true' porque o vídeo não está hospedado
+  // Assim a UI mostra a caixa elegante em vez de dar erro 404 na consola
+  const [failed, setFailed] = useState(true); 
 
   const togglePlay = () => {
+    if (failed) return; // Se falhou, não faz nada ao clicar
+    
     const video = videoRef.current;
     if (!video) return;
     if (playing) {
@@ -48,11 +53,12 @@ export function DemoVideo() {
             DEMO
           </span>
 
+          {/* O src foi comentado para evitar o erro 404 do Vercel */}
           <video
             ref={videoRef}
-            src="/video/demo.mp4"
+            // src="/video/demo.mp4"
             playsInline
-            preload="metadata"
+            preload="none"
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}
@@ -76,8 +82,7 @@ export function DemoVideo() {
                 <TerminalIcon size={40} className="mx-auto text-accent mb-4" />
                 <p className="text-white font-semibold mb-2">Demo indisponível</p>
                 <p className="text-sm text-neutral-60">
-                  O vídeo <code className="text-accent">/video/demo.mp4</code> não
-                  pôde ser carregado.
+                  O vídeo de demonstração estará disponível em breve.
                 </p>
               </div>
             </div>

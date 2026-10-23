@@ -1,0 +1,24 @@
+# Usa a imagem oficial do Python (Linux)
+FROM python:3.12-slim
+
+# Instala dependências de sistema necessárias (ex: para o psycopg2)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Define a pasta de trabalho
+WORKDIR /app
+
+# Copia os requisitos e instala (está dentro da pasta backend)
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt gunicorn
+
+# Copia todo o código do backend para dentro do container
+COPY backend/ .
+
+# O Fly.io usa a porta 8080 por defeito
+EXPOSE 8080
+
+# O comando que arranca a API (usa a porta 8080)
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "wsgi:app"]
