@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 # ============================================================
-# DETECÇÃO
+# DETECÇÃO E BUILD
 # ============================================================
 def _smtp_configured() -> bool:
     return bool(
@@ -25,10 +25,6 @@ def _smtp_configured() -> bool:
         and os.getenv("SMTP_PASS")
     )
 
-
-# ============================================================
-# BUILD MESSAGE (SMTP)
-# ============================================================
 def _build_message(to: str, subject: str, html: str, text: str) -> EmailMessage:
     from_addr = os.getenv("SMTP_FROM", os.getenv("SMTP_USER"))
     from_name = os.getenv("SMTP_FROM_NAME", "Sentinel")
@@ -43,15 +39,38 @@ def _build_message(to: str, subject: str, html: str, text: str) -> EmailMessage:
 
 
 # ============================================================
-# SEND — Resend → SMTP fallback
+# SEND — SMTP (Gmail) → Resend fallback
 # ============================================================
 def _send(to: str, subject: str, html: str, text: str) -> bool:
-    # ---------- Resend ----------
+    # ---------- SMTP (Gmail) ----------
+    if _smtp_configured():
+        host = os.getenv("SMTP_HOST")
+        port = int(os.getenv("SMTP_PORT", 587))
+        user = os.getenv("SMTP_USER")
+        password = os.getenv("SMTP_PASS")
+
+        log.info("[SMTP] A enviar para %s (host=%s)", to, host)
+        msg = _build_message(to, subject, html, text)
+
+        try:
+            with smtplib.SMTP(host, port, timeout=15) as smtp:
+                smtp.ehlo()
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+                smtp.login(user, password)
+                smtp.send_message(msg)
+            log.info("[SMTP] ✅ Enviado para %s", to)
+            return True
+        except Exception as e:
+            log.error("[SMTP] ❌ Falhou para %s: %s", to, e)
+            # Se falhar o Gmail, tenta o Resend abaixo
+
+    # ---------- Resend (Fallback) ----------
     resend_key = os.getenv("RESEND_API_KEY")
     if resend_key:
         import resend as resend_sdk
         resend_sdk.api_key = resend_key
-        from_name = os.getenv("RESEND_FROM_NAME", "Sentinel-Real")
+        from_name = os.getenv("RESEND_FROM_NAME", "Sentinel")
         from_addr = os.getenv("RESEND_FROM", "onboarding@resend.dev")
         try:
             resend_sdk.Emails.send({
@@ -64,43 +83,9 @@ def _send(to: str, subject: str, html: str, text: str) -> bool:
             log.info("[Resend] ✅ Enviado para %s", to)
             return True
         except Exception as e:
-            log.warning(
-                "[Resend] ❌ Falhou (%s) — a tentar SMTP como fallback",
-                str(e)[:120],
-            )
+            log.error("[Resend] ❌ Falhou (%s)", str(e)[:120])
 
-    # ---------- SMTP ----------
-    if not _smtp_configured():
-        log.error("[SMTP] NÃO CONFIGURADO — não envia para %s", to)
-        return False
-
-    host = os.getenv("SMTP_HOST")
-    port = int(os.getenv("SMTP_PORT", 587))
-    user = os.getenv("SMTP_USER")
-    password = os.getenv("SMTP_PASS")
-
-    log.info("[SMTP] A enviar para %s (host=%s, port=%s)", to, host, port)
-
-    msg = _build_message(to, subject, html, text)
-
-    try:
-        if port == 465:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as smtp:
-                smtp.login(user, password)
-                smtp.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=15) as smtp:
-                smtp.ehlo()
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
-                smtp.login(user, password)
-                smtp.send_message(msg)
-        log.info("[SMTP] ✅ Enviado para %s", to)
-        return True
-    except Exception as e:
-        log.exception("[SMTP] ❌ Falhou para %s: %s", to, e)
-        return False
+    return False
 
 
 # ============================================================
@@ -217,6 +202,9 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
 """
 
 
+# ============================================================
+# TEMPLATE TEXTO — REDEFINIR PASSWORD
+# ============================================================
 def _render_reset_text(reset_url: str, expires_minutes: int) -> str:
     return f"""\
 SENTINEL
@@ -394,7 +382,7 @@ O que podes fazer agora:
   · Analisar uma aplicação web em menos de 15 minutos
   · Consultar o histórico de scans anteriores
   · Exportar relatórios em JSON ou PDF
-  · Ver vulnerabilidades priorizadas por severidade
+  · Ver vulnerabilidades prioritizadas por severidade
 
 Abre o dashboard:
 {app_url}/dashboard
@@ -408,27 +396,24 @@ raynfernandes214@gmail.com
 """
 
 
+# ============================================================
+# API PÚBLICA
+# ============================================================
 def send_welcome_email(to: str, app_url: str, provider: str | None = None) -> bool:
     log.info("[WELCOME] a preparar email para %s", to)
-
     html = _render_welcome_html(app_url, to, provider)
     text = _render_welcome_text(app_url, to, provider)
     subject = "Bem-vindo ao Sentinel"
-
     result = _send(to, subject, html, text)
     log.info("[WELCOME] resultado do envio para %s: %s", to, result)
     return result
 
-# ============================================================
-# API PÚBLICA
-# ============================================================
+
 def send_password_reset(to: str, reset_url: str, expires_minutes: int) -> bool:
     log.info("[RESET] a preparar email para %s", to)
-
     html = _render_reset_html(reset_url, expires_minutes)
     text = _render_reset_text(reset_url, expires_minutes)
     subject = "Redefinir password — Sentinel"
-
     result = _send(to, subject, html, text)
     log.info("[RESET] resultado do envio para %s: %s", to, result)
     return result
