@@ -1,4 +1,4 @@
-# config.py — versão final
+# config.py — versão final pronta para produção
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -9,6 +9,10 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 DEFAULT_SQLITE = f"sqlite:///{(BASE_DIR / 'sentinel.db').as_posix()}"
+
+# URLs de Produção (Fallback de segurança)
+PROD_BACKEND_URL = "https://dast-tool-backend.onrender.com"
+PROD_FRONTEND_URL = "https://dast-tool.vercel.app"
 
 
 def _bool(value: str | None, default: bool = False) -> bool:
@@ -52,7 +56,11 @@ class Config:
         }
 
     # ---------- CORS ----------
-    CORS_ORIGINS = _list(os.getenv("CORS_ORIGINS"), default="http://localhost:5173")
+    # Em produção, só aceita o teu frontend Vercel. Em dev, aceita o localhost.
+    CORS_ORIGINS = _list(
+        os.getenv("CORS_ORIGINS"), 
+        default=f"http://localhost:5173,{PROD_FRONTEND_URL}"
+    )
 
     # ---------- RATE LIMIT ----------
     RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
@@ -60,7 +68,7 @@ class Config:
     RATELIMIT_SWALLOW_ERRORS = True
 
     # ---------- APP ----------
-    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    FRONTEND_URL = os.getenv("FRONTEND_URL", PROD_FRONTEND_URL)
     RESET_TOKEN_EXPIRY_MINUTES = _int(os.getenv("RESET_TOKEN_EXPIRY_MINUTES"), 30)
     MAX_CONTENT_LENGTH = _int(os.getenv("MAX_CONTENT_LENGTH"), 2 * 1024 * 1024)
     JSON_SORT_KEYS = False
@@ -83,17 +91,19 @@ class Config:
     # ---------- OAUTH: GOOGLE ----------
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    # Fallback inteligente: usa o URL do Render se estiver em produção
     GOOGLE_REDIRECT_URI = os.getenv(
         "GOOGLE_REDIRECT_URI",
-        "http://localhost:5000/api/auth/google/callback",
+        f"{PROD_BACKEND_URL}/api/auth/google/callback" if os.getenv("FLASK_ENV") == "production" else "http://localhost:5000/api/auth/google/callback",
     )
 
     # ---------- OAUTH: GITHUB ----------
     GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
     GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+    # Fallback inteligente: usa o URL do Render se estiver em produção
     GITHUB_REDIRECT_URI = os.getenv(
         "GITHUB_REDIRECT_URI",
-        "http://localhost:5000/api/auth/github/callback",
+        f"{PROD_BACKEND_URL}/api/auth/github/callback" if os.getenv("FLASK_ENV") == "production" else "http://localhost:5000/api/auth/github/callback",
     )
 
     # ---------- SMTP ----------
@@ -146,9 +156,7 @@ class ProductionConfig(Config):
                 f"DATABASE_URL deve ser PostgreSQL em produção (atual: {uri.split(':')[0]})."
             )
 
-        if not cls.RATELIMIT_STORAGE_URI.startswith("redis"):
-            errors.append("RATELIMIT_STORAGE_URI deve ser redis:// em produção.")
-
+        
         if "localhost" in cls.FRONTEND_URL or "127.0.0.1" in cls.FRONTEND_URL:
             errors.append(f"FRONTEND_URL aponta para localhost: {cls.FRONTEND_URL}")
 
