@@ -5,7 +5,7 @@ import { getUser, clearAuth, setUser as persistUser, type User } from '@/lib/aut
 import { api } from '@/lib/api';
 import Modal from '@/components/dashboard/Modal';
 import AvatarUploader from '@/components/ui/AvatarUploader';
-import './account.css';
+import './Account.css';
 
 // ============================================
 // TIPOS
