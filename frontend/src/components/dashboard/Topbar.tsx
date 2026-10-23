@@ -59,8 +59,8 @@ function useSystemStatus(): SystemStatus {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 4000);
-        // URL relativa — o Vite faz proxy para http://localhost:5000/health
-        const res = await fetch('/health', { signal: controller.signal });
+       const API_URL = import.meta.env.VITE_API_URL || '';
+       const res = await fetch(`${API_URL}/health`, { signal: controller.signal });
         clearTimeout(timer);
         if (cancelled) return;
         if (!res.ok) {

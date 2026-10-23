@@ -5,6 +5,11 @@ import { useToast } from '@/layouts/DashboardLayout';
 import { api } from '@/lib/api';
 
 // ============================================
+// CONFIG
+// ============================================
+const API_URL = import.meta.env.VITE_API_URL || '';
+
+// ============================================
 // TIPOS
 // ============================================
 type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
@@ -44,7 +49,7 @@ const SEV_MAP: Record<string, Severity> = {
   high: 'HIGH',
   medium: 'MEDIUM',
   low: 'LOW',
-  info: 'INFO',      // ← ANTES era 'LOW'
+  info: 'INFO',
 };
 
 const STATUS_LABEL: Record<VulnStatus, string> = {
@@ -83,7 +88,6 @@ function timeAgo(iso?: string): string {
   }
 }
 
-// Cor para o badge de severidade (fallback se o SeverityBadge não aceitar INFO)
 function sevTextColor(s: Severity): string {
   switch (s) {
     case 'CRITICAL': return 'text-[#FF2E54]';
@@ -195,7 +199,7 @@ const Vulnerabilities = () => {
       high: vulns.filter((v) => v.severity === 'HIGH').length,
       medium: vulns.filter((v) => v.severity === 'MEDIUM').length,
       low: vulns.filter((v) => v.severity === 'LOW').length,
-      info: vulns.filter((v) => v.severity === 'INFO').length,   // ← NOVO
+      info: vulns.filter((v) => v.severity === 'INFO').length,
       fixed: vulns.filter((v) => v.status === 'fixed').length,
     }),
     [vulns],
@@ -213,8 +217,8 @@ const Vulnerabilities = () => {
       );
       const token = data.download_token;
       const url = token
-        ? `/api/reports/${data.id}/download?token=${encodeURIComponent(token)}`
-        : `/api/reports/${data.id}/download`;
+        ? `${API_URL}/api/reports/${data.id}/download?token=${encodeURIComponent(token)}`
+        : `${API_URL}/api/reports/${data.id}/download`;
       window.open(url, '_blank');
       showToast('Relatório gerado.', 'success');
     } catch (err: any) {
@@ -426,7 +430,7 @@ const Vulnerabilities = () => {
               { key: 'HIGH' as const, label: 'Alta', dot: 'bg-[#FF8800]', count: counts.high },
               { key: 'MEDIUM' as const, label: 'Média', dot: 'bg-[#FFC107]', count: counts.medium },
               { key: 'LOW' as const, label: 'Baixa', dot: 'bg-[#00B0FF]', count: counts.low },
-              { key: 'INFO' as const, label: 'Info', dot: 'bg-gray-400', count: counts.info },  // ← NOVO
+              { key: 'INFO' as const, label: 'Info', dot: 'bg-gray-400', count: counts.info },
             ].map((f) => (
               <button
                 key={f.key}
