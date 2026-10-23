@@ -51,7 +51,7 @@ def _send(to: str, subject: str, html: str, text: str) -> bool:
     if resend_key:
         import resend as resend_sdk
         resend_sdk.api_key = resend_key
-        from_name = os.getenv("RESEND_FROM_NAME", "Sentinel")
+        from_name = os.getenv("RESEND_FROM_NAME", "Sentinel-Real")
         from_addr = os.getenv("RESEND_FROM", "onboarding@resend.dev")
         try:
             resend_sdk.Emails.send({
