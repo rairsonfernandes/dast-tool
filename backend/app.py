@@ -47,7 +47,11 @@ if _trusted > 0:
 db.init_app(app)
 cors.init_app(
     app,
-    resources={r"/api/*": {"origins": cfg.CORS_ORIGINS}},
+    resources={
+        r"/api/*": {"origins": cfg.CORS_ORIGINS},
+        r"/health": {"origins": cfg.CORS_ORIGINS}, # <--- Adiciona esta linha
+        r"/": {"origins": cfg.CORS_ORIGINS},
+    },
     supports_credentials=True,
     max_age=3600,
     allow_headers=[
