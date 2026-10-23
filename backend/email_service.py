@@ -16,6 +16,7 @@ def _send(to: str, subject: str, html: str, reset_url: str = "") -> bool:
     service_id = os.getenv("EMAILJS_SERVICE_ID")
     template_id = os.getenv("EMAILJS_TEMPLATE_ID")
     public_key = os.getenv("EMAILJS_PUBLIC_KEY")
+    private_key = os.getenv("EMAILJS_PRIVATE_KEY")
 
     if not service_id or not template_id or not public_key:
         log.error("[EmailJS] NÃO CONFIGURADO — não envia para %s", to)
@@ -28,6 +29,7 @@ def _send(to: str, subject: str, html: str, reset_url: str = "") -> bool:
         "service_id": service_id,
         "template_id": template_id,
         "user_id": public_key,
+        "accessToken": private_key,
         "template_params": {
             "to_email": to,
             "subject": subject,
