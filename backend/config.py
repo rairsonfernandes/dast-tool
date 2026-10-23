@@ -1,4 +1,4 @@
-# config.py — versão final pronta para produção
+# config.py
 import os
 from datetime import timedelta
 from pathlib import Path

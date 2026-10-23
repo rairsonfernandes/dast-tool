@@ -1,6 +1,5 @@
 """
 Envio de emails transacionais.
-Resend (preferido) com fallback automático para SMTP.
 """
 import os
 import ssl
@@ -105,7 +104,7 @@ def _send(to: str, subject: str, html: str, text: str) -> bool:
 
 
 # ============================================================
-# TEMPLATE HTML — minimalista
+# TEMPLATE HTML — REDEFINIR PASSWORD
 # ============================================================
 def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
     return f"""\
@@ -116,11 +115,6 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="x-apple-disable-message-reformatting">
   <title>Redefinir password — Sentinel</title>
-  <!--[if mso]>
-  <style type="text/css">
-    body, table, td {{font-family: Arial, sans-serif !important;}}
-  </style>
-  <![endif]-->
 </head>
 <body style="margin:0;padding:0;background-color:#0B1220;color:#F1F5F9;font-family:'Inter',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
 
@@ -132,11 +126,8 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
          style="background-color:#0B1220;padding:40px 20px;">
     <tr>
       <td align="center">
-
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
                style="max-width:520px;">
-
-          <!-- Nome da plataforma -->
           <tr>
             <td style="padding-bottom:32px;text-align:left;">
               <div style="font-family:'Space Grotesk',Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:4px;color:#FFFFFF;text-transform:uppercase;">
@@ -144,8 +135,6 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
               </div>
             </td>
           </tr>
-
-          <!-- Título -->
           <tr>
             <td style="padding-bottom:16px;text-align:left;">
               <h1 style="margin:0;font-family:'Space Grotesk',Arial,sans-serif;font-size:24px;line-height:1.3;font-weight:700;color:#FFFFFF;">
@@ -153,18 +142,14 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
               </h1>
             </td>
           </tr>
-
-          <!-- Descrição -->
           <tr>
             <td style="padding-bottom:28px;text-align:left;">
               <p style="margin:0;font-size:15px;line-height:1.65;color:rgba(241,245,249,0.65);">
-                Recebemos um pedido para Redefinir a senha  da tua conta Sentinel.
+                Recebemos um pedido para Redefinir a senha da tua conta Sentinel.
                 Clica no botão abaixo para escolher uma nova password.
               </p>
             </td>
           </tr>
-
-          <!-- Botão -->
           <tr>
             <td style="padding-bottom:28px;text-align:left;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
@@ -180,27 +165,21 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
               </table>
             </td>
           </tr>
-
-          <!-- Info -->
           <tr>
             <td style="padding-bottom:32px;text-align:left;">
               <p style="margin:0 0 6px 0;font-size:14px;line-height:1.55;color:#16C7B7;font-weight:600;">
                 Link válido por {expires_minutes} minutos
               </p>
               <p style="margin:0;font-size:13px;line-height:1.55;color:rgba(241,245,249,0.55);">
-                Depois de expirar, podes pedir um novo em sentinel.app.
+                Depois de expirar, podes pedir um novo em <a href="https://dast-tool.vercel.app" style="color:#16C7B7;text-decoration:none;">dast-tool.vercel.app</a>.
               </p>
             </td>
           </tr>
-
-          <!-- Divider -->
           <tr>
             <td style="padding-bottom:24px;">
               <div style="height:1px;background-color:rgba(241,245,249,0.08);font-size:0;line-height:0;">&nbsp;</div>
             </td>
           </tr>
-
-          <!-- Link fallback -->
           <tr>
             <td style="padding-bottom:6px;text-align:left;">
               <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:rgba(241,245,249,0.5);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1px;">
@@ -217,8 +196,6 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
               </p>
             </td>
           </tr>
-
-          <!-- Footer -->
           <tr>
             <td style="padding-top:40px;text-align:left;">
               <p style="margin:0;font-size:11px;line-height:1.5;color:rgba(241,245,249,0.35);font-family:'JetBrains Mono',monospace;letter-spacing:0.5px;">
@@ -231,21 +208,15 @@ def _render_reset_html(reset_url: str, expires_minutes: int) -> str:
               </p>
             </td>
           </tr>
-
         </table>
-
       </td>
     </tr>
   </table>
-
 </body>
 </html>
 """
 
 
-# ============================================================
-# TEMPLATE TEXTO
-# ============================================================
 def _render_reset_text(reset_url: str, expires_minutes: int) -> str:
     return f"""\
 SENTINEL
@@ -259,13 +230,11 @@ Clica no link abaixo para escolher uma nova password.
 {reset_url}
 
 Link válido por {expires_minutes} minutos.
-Depois de expirar, podes pedir um novo em sentinel.app.
+Depois de expirar, podes pedir um novo em https://dast-tool.vercel.app.
 
 © 2026 Sentinel
 raynfernandes214@gmail.com
 """
-
-
 
 
 # ============================================================
@@ -286,11 +255,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="x-apple-disable-message-reformatting">
   <title>Bem-vindo ao Sentinel</title>
-  <!--[if mso]>
-  <style type="text/css">
-    body, table, td {{font-family: Arial, sans-serif !important;}}
-  </style>
-  <![endif]-->
 </head>
 <body style="margin:0;padding:0;background-color:#0B1220;color:#F1F5F9;font-family:'Inter',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
 
@@ -302,11 +266,8 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
          style="background-color:#0B1220;padding:40px 20px;">
     <tr>
       <td align="center">
-
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
                style="max-width:520px;">
-
-          <!-- Nome da plataforma -->
           <tr>
             <td style="padding-bottom:32px;text-align:left;">
               <div style="font-family:'Space Grotesk',Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:4px;color:#FFFFFF;text-transform:uppercase;">
@@ -314,8 +275,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </div>
             </td>
           </tr>
-
-          <!-- Título -->
           <tr>
             <td style="padding-bottom:16px;text-align:left;">
               <h1 style="margin:0;font-family:'Space Grotesk',Arial,sans-serif;font-size:24px;line-height:1.3;font-weight:700;color:#FFFFFF;">
@@ -323,8 +282,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </h1>
             </td>
           </tr>
-
-          <!-- Descrição -->
           <tr>
             <td style="padding-bottom:24px;text-align:left;">
               <p style="margin:0 0 16px 0;font-size:15px;line-height:1.65;color:rgba(241,245,249,0.65);">
@@ -339,8 +296,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </p>
             </td>
           </tr>
-
-          <!-- Botão -->
           <tr>
             <td style="padding-bottom:32px;text-align:left;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
@@ -356,8 +311,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </table>
             </td>
           </tr>
-
-          <!-- Info -->
           <tr>
             <td style="padding-bottom:32px;text-align:left;">
               <p style="margin:0 0 6px 0;font-size:14px;line-height:1.55;color:#16C7B7;font-weight:600;">
@@ -371,15 +324,11 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </p>
             </td>
           </tr>
-
-          <!-- Divider -->
           <tr>
             <td style="padding-bottom:24px;">
               <div style="height:1px;background-color:rgba(241,245,249,0.08);font-size:0;line-height:0;">&nbsp;</div>
             </td>
           </tr>
-
-          <!-- Aviso de segurança -->
           <tr>
             <td style="padding-bottom:24px;text-align:left;">
               <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:rgba(241,245,249,0.5);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1px;">
@@ -391,8 +340,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </p>
             </td>
           </tr>
-
-          <!-- Link para o site -->
           <tr>
             <td style="padding-bottom:40px;text-align:left;">
               <p style="margin:0;font-size:13px;line-height:1.55;color:rgba(241,245,249,0.55);">
@@ -403,8 +350,6 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </p>
             </td>
           </tr>
-
-          <!-- Footer -->
           <tr>
             <td style="text-align:left;">
               <p style="margin:0;font-size:11px;line-height:1.5;color:rgba(241,245,249,0.35);font-family:'JetBrains Mono',monospace;letter-spacing:0.5px;">
@@ -417,13 +362,10 @@ def _render_welcome_html(app_url: str, user_email: str, provider: str | None = N
               </p>
             </td>
           </tr>
-
         </table>
-
       </td>
     </tr>
   </table>
-
 </body>
 </html>
 """

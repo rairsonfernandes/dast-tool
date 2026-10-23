@@ -264,7 +264,7 @@ export default function ForgotPassword() {
       <aside className="auth-visual" aria-hidden="true">
         <div className="auth-visual-content">
           <Link to="/" className="auth-visual-brand">
-            SENT<span>I</span>NEL
+            SENT<span>I</span>NAL
           </Link>
           <div className="auth-visual-quote">
             <span className="quote-badge">Segurança</span>

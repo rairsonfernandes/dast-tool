@@ -1,5 +1,5 @@
 ﻿/* ============================================================
-   SENTINEL â€” Auth Pages (Login / Register / Forgot / Reset)
+   SENTINEL — Auth Pages (Login / Register / Forgot / Reset)
    ============================================================ */
 
 /* ---------- LAYOUT SPLIT ---------- */
@@ -11,7 +11,6 @@
   color: var(--text);
 }
 
-/* Left: form */
 .auth-panel {
   display: flex;
   flex-direction: column;
@@ -28,7 +27,6 @@
   margin: 0 auto;
 }
 
-/* Right: visual */
 .auth-visual {
   position: relative;
   overflow: hidden;
@@ -131,14 +129,32 @@
   text-decoration: none;
 }
 .auth-header-brand span { color: var(--accent); }
+
+/* ============================================================
+   LINKS DE NAVEGAÇÃO DO HEADER (Criar conta / Entrar)
+   ============================================================ */
 .auth-header-link {
   font-size: 13px;
   color: var(--muted);
   text-decoration: none;
   transition: color 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
-.auth-header-link:hover { color: var(--accent); }
-.auth-header-link strong { color: var(--accent); font-weight: 600; }
+.auth-header-link:hover {
+  color: var(--text-strong);
+}
+.auth-header-link strong {
+  color: var(--accent);
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+.auth-header-link:hover strong {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
 
 /* ---------- FORM ---------- */
 .auth-title {
@@ -342,14 +358,37 @@
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* ============================================================
+   LINK "ESQUECESTE-TE DA PASSWORD?"
+   ============================================================ */
 .auth-link {
   font-size: 13px;
   font-weight: 500;
   color: var(--accent);
   text-decoration: none;
-  transition: color 0.2s ease;
+  transition: all 0.2s ease;
+  position: relative;
 }
-.auth-link:hover { color: var(--accent-hover); text-decoration: underline; }
+.auth-link::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  transform: scaleX(0);
+  height: 1px;
+  bottom: -2px;
+  left: 0;
+  background-color: var(--accent);
+  transform-origin: bottom right;
+  transition: transform 0.25s ease-out;
+}
+.auth-link:hover::after {
+  transform: scaleX(1);
+  transform-origin: bottom left;
+}
+.auth-link:hover {
+  color: var(--accent-hover);
+}
 
 /* Submit */
 .auth-submit {
@@ -413,9 +452,21 @@
   font-size: 13px;
   color: var(--muted);
 }
-.auth-footer a { color: var(--accent); text-decoration: none; }
-.auth-footer a:hover { text-decoration: underline; }
+.auth-footer a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+.auth-footer a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
 
+/* ============================================================
+   TERMOS E POLÍTICA DE PRIVACIDADE
+   ============================================================ */
 .auth-legal {
   margin-top: 32px;
   font-size: 11.5px;
@@ -423,8 +474,18 @@
   line-height: 1.6;
   text-align: center;
 }
-.auth-legal a { color: var(--muted); text-decoration: underline; }
-.auth-legal a:hover { color: var(--accent); }
+.auth-legal a {
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.2);
+  text-underline-offset: 3px;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+.auth-legal a:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
 
 /* ---------- RESPONSIVE ---------- */
 @media (max-width: 1023px) {

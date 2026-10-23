@@ -1,5 +1,6 @@
 """Forgot / Reset / Change password."""
 from datetime import datetime, timedelta, timezone
+import logging
 
 from flask import Blueprint, request, jsonify
 
@@ -13,6 +14,7 @@ from email_service import send_password_reset
 from config import Config
 
 bp = Blueprint("auth_password", __name__, url_prefix="/api/auth")
+log = logging.getLogger("auth.password")
 
 
 def _validate_password(password: str) -> tuple[bool, str]:
@@ -53,14 +55,23 @@ def forgot_password():
         db.session.commit()
 
         url = f"{Config.FRONTEND_URL}/reset-password?token={raw}"
-        send_password_reset(
-            to=email,
-            reset_url=url,
-            expires_minutes=Config.RESET_TOKEN_EXPIRY_MINUTES,
-        )
+        
+        # --- PROTEÇÃO PARA PRODUÇÃO ---
+        # Se o envio de email falhar (ex: falta de chaves API no Render),
+        # não bloqueia a resposta ao utilizador com um erro 500.
+        try:
+            send_password_reset(
+                to=email,
+                reset_url=url,
+                expires_minutes=Config.RESET_TOKEN_EXPIRY_MINUTES,
+            )
+        except Exception as e:
+            log.error("Falha ao enviar email de recuperação para %s: %s", email, e)
+            
     elif user and user.provider:
-        # conta OAuth
+        # conta OAuth (Google/GitHub) — não tem password
         resp["oauth_only"] = user.provider
+        
     return jsonify(resp)
 
 
