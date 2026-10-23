@@ -43,10 +43,10 @@ export default function Privacy() {
         <div>
           <strong>Em 60 segundos:</strong>
           <ul className="legal-list legal-list-clean" style={{ marginTop: 10 }}>
-            <li>✅ Recolhemos apenas os dados necessários.</li>
-            <li>✅ Não vendemos os teus dados.</li>
-            <li>✅ Os resultados dos scans são teus e ficam cifrados.</li>
-            <li>✅ Podes exportar ou eliminar a conta a qualquer momento.</li>
+            <li>Recolhemos apenas os dados necessários.</li>
+            <li>Não vendemos os teus dados.</li>
+            <li>Os resultados dos scans são teus e ficam cifrados.</li>
+            <li>Podes exportar ou eliminar a conta a qualquer momento.</li>
           </ul>
         </div>
       </div>
@@ -55,7 +55,7 @@ export default function Privacy() {
       <ul className="legal-list legal-list-clean">
         <li><strong>Entidade:</strong> Sentinel Technologies, Lda.</li>
         <li><strong>Sede:</strong> Lisboa, Portugal</li>
-        <li><strong>DPO:</strong> <a href="mailto:dpo@sentinel.sec">dpo@sentinel.sec</a></li>
+        <li><strong>DPO:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
         <li><strong>Autoridade de controlo:</strong> CNPD</li>
       </ul>
 
@@ -142,7 +142,7 @@ export default function Privacy() {
         <li><strong>Oposição</strong> (art. 21.º)</li>
       </ul>
       <p>
-        Podes exercer em <a href="mailto:dpo@sentinel.sec">dpo@sentinel.sec</a>.
+        Podes exercer em <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a>.
         Resposta em 30 dias.
       </p>
 
@@ -174,9 +174,9 @@ export default function Privacy() {
 
       <p>Contactos:</p>
       <ul className="legal-list legal-list-clean">
-        <li><strong>DPO:</strong> <a href="mailto:dpo@sentinel.sec">dpo@sentinel.sec</a></li>
-        <li><strong>Privacidade:</strong> <a href="mailto:privacy@sentinel.sec">privacy@sentinel.sec</a></li>
-        <li><strong>Segurança:</strong> <a href="mailto:security@sentinel.sec">security@sentinel.sec</a></li>
+        <li><strong>DPO:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
+        <li><strong>Privacidade:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
+        <li><strong>Segurança:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
       </ul>
 
       <p className="legal-end">

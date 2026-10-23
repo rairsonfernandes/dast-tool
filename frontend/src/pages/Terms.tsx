@@ -81,7 +81,7 @@ export default function Terms() {
       </p>
       <p>
         3.2. Deves notificar-nos imediatamente em{" "}
-        <a href="mailto:security@sentinel.sec">security@sentinel.sec</a> caso
+        <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a> caso
         suspeites de acesso não autorizado.
       </p>
 
@@ -135,7 +135,7 @@ export default function Terms() {
       </p>
       <p>
         8.2. Vulnerabilidades no próprio Serviço devem ser reportadas para{" "}
-        <a href="mailto:security@sentinel.sec">security@sentinel.sec</a>.
+        <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a>.
       </p>
 
       <h2 id="pagamentos">9. Pagamentos e Renovações</h2>
@@ -196,10 +196,10 @@ export default function Terms() {
 
       <h2 id="contacto">16. Contacto</h2>
       <ul className="legal-list legal-list-clean">
-        <li><strong>Geral:</strong> <a href="mailto:legal@sentinel.sec">legal@sentinel.sec</a></li>
-        <li><strong>Suporte:</strong> <a href="mailto:support@sentinel.sec">support@sentinel.sec</a></li>
-        <li><strong>Segurança:</strong> <a href="mailto:security@sentinel.sec">security@sentinel.sec</a></li>
-        <li><strong>DPO:</strong> <a href="mailto:dpo@sentinel.sec">dpo@sentinel.sec</a></li>
+        <li><strong>Geral:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
+        <li><strong>Suporte:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
+        <li><strong>Segurança:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
+        <li><strong>DPO:</strong> <a href="mailto:raynfernandes214@gmail.com">raynfernandes214@gmail.com</a></li>
       </ul>
 
       <div className="legal-callout legal-callout-warn">
