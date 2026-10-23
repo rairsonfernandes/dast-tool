@@ -47,7 +47,7 @@ function useCurrentUser(): User | null {
 }
 
 // ============================================
-// HOOK: health status (60s) — via proxy Vite
+// HOOK: health status (60s)
 // ============================================
 function useSystemStatus(): SystemStatus {
   const [status, setStatus] = useState<SystemStatus>('unknown');
@@ -58,12 +58,15 @@ function useSystemStatus(): SystemStatus {
     const check = async () => {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
+        // 60 segundos é tempo suficiente para o Render acordar do sono profundo
+        const timer = setTimeout(() => controller.abort(), 60000);
         
-
-        const API_URL = import.meta.env.VITE_API_URL || '';
+        // URL explícito do Render para nunca falhar no Vercel
+        const API_URL = import.meta.env.VITE_API_URL || 'https://dast-tool-backend.onrender.com';
+        
         const res = await fetch(`${API_URL}/health`, { signal: controller.signal });
         clearTimeout(timer);
+        
         if (cancelled) return;
         if (!res.ok) {
           setStatus('down');
@@ -121,7 +124,6 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Paleta estável por nome (mesmo user = mesma cor)
 const AVATAR_PALETTES = [
   { from: '#00FF66', to: '#00B34A', ring: 'rgba(0,255,102,0.45)', text: '#001A0A' },
   { from: '#00C2FF', to: '#0066CC', ring: 'rgba(0,194,255,0.45)', text: '#001A22' },
@@ -174,7 +176,6 @@ const Avatar: React.FC<AvatarProps> = ({ name, src, size = 'sm', online = false 
           }}
           aria-hidden="true"
         >
-          {/* Brilho diagonal */}
           <div
             className="absolute inset-0 pointer-events-none"
             style={{
@@ -182,7 +183,6 @@ const Avatar: React.FC<AvatarProps> = ({ name, src, size = 'sm', online = false 
                 'linear-gradient(135deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.05) 40%, transparent 60%)',
             }}
           />
-          {/* Grelha cyber subtil */}
           <svg
             className="absolute inset-0 w-full h-full opacity-[0.12] pointer-events-none"
             xmlns="http://www.w3.org/2000/svg"
@@ -194,7 +194,6 @@ const Avatar: React.FC<AvatarProps> = ({ name, src, size = 'sm', online = false 
             </defs>
             <rect width="100%" height="100%" fill={`url(#${gridId}-g)`} />
           </svg>
-          {/* Iniciais */}
           <span
             className={`absolute inset-0 flex items-center justify-center font-mono font-black tracking-wider ${s.text}`}
             style={{
@@ -204,7 +203,6 @@ const Avatar: React.FC<AvatarProps> = ({ name, src, size = 'sm', online = false 
           >
             {initials}
           </span>
-          {/* Borda interior */}
           <div
             className={`absolute inset-0 ${s.rounded} pointer-events-none`}
             style={{ boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)' }}
@@ -237,7 +235,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
   const systemStatus = useSystemStatus();
   const { requestLogout } = useLogout();
 
-  // Fecha dropdown ao clicar fora
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -247,7 +244,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // Fecha com Escape + devolve foco
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -261,7 +257,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
-  // Derivados
   const displayName =
     user?.name?.trim() || user?.email?.split('@')[0] || 'Utilizador';
   const displayEmail = user?.email || '—';
@@ -278,7 +273,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#0B0E14]/80 backdrop-blur-xl border-b border-[#1A2130] shrink-0">
       <div className="flex items-center justify-between px-6 md:px-8 py-3.5">
-        {/* Breadcrumb */}
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -304,9 +298,7 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
           </nav>
         </div>
 
-        {/* Ações */}
         <div className="flex items-center gap-3 md:gap-5">
-          {/* Status do sistema (real via /health) */}
           <div
             className="hidden sm:flex items-center gap-2 bg-[#11151E] px-3 py-1.5 rounded-lg border border-[#1A2130] text-[10px] font-mono"
             role="status"
@@ -319,7 +311,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
 
           <div className="w-px h-8 bg-[#1A2130] hidden sm:block" />
 
-          {/* Perfil */}
           <div className="relative" ref={ref}>
             <button
               ref={menuBtnRef}
@@ -364,7 +355,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
                 aria-label="Menu do utilizador"
                 className="absolute right-0 mt-2 w-64 bg-[#0B0E14] border border-[#1A2130] rounded-xl shadow-2xl overflow-hidden z-50 dropdown-enter"
               >
-                {/* Info do utilizador */}
                 <div className="p-4 bg-gradient-to-br from-[#11151E] to-[#0B0E14] border-b border-[#1A2130]">
                   <div className="flex items-center gap-3">
                     <Avatar name={displayName} src={avatarUrl} size="md" />
@@ -382,7 +372,6 @@ const Topbar: React.FC<TopbarProps> = ({ onOpenSidebar, breadcrumb }) => {
                   </div>
                 </div>
 
-                {/* Menu */}
                 <div className="p-2">
                   <Link
                     to="/account"
