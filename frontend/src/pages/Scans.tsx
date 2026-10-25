@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/layouts/DashboardLayout';
 import Modal from '@/components/dashboard/Modal';
@@ -42,6 +42,13 @@ interface DashboardStats {
   findings: { severity: string; count: number }[];
 }
 
+/** Payload SSE. Ex: { type: 'scan.completed', scanId, url, ts } */
+interface RealtimeEvent {
+  type: string;
+  ts?: number;
+  [key: string]: any;
+}
+
 // ============================================
 // HELPERS
 // ============================================
@@ -82,6 +89,25 @@ const STATUS_STYLE: Record<ApiScanStatus, { bg: string; text: string; dot: strin
   paused:    { bg: 'bg-gray-500/10',   text: 'text-gray-400',   dot: 'bg-gray-400',              border: 'border-gray-500/30' },
 };
 
+/** Eventos SSE que disparam refresh da lista/stats. */
+const REFRESH_EVENT_TYPES = new Set([
+  'scan.created',
+  'scan.started',
+  'scan.progress',
+  'scan.completed',
+  'scan.failed',
+  'scan.cancelled',
+  'scan.paused',
+  'scan.resumed',
+  'scan.deleted',
+  'scan.bulk_deleted',
+  'vulnerability.created',
+  'vulnerability.updated',
+  'mitigation.started',
+  'mitigation.completed',
+  'mitigation.failed',
+]);
+
 // ============================================
 // COMPONENTE
 // ============================================
@@ -93,6 +119,8 @@ const Scans = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   // Form
   const [url, setUrl] = useState('');
@@ -114,6 +142,11 @@ const Scans = () => {
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deleteBulkOpen, setDeleteBulkOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Refs realtime
+  const sseRef = useRef<EventSource | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const refreshAllRef = useRef<(silent?: boolean) => Promise<void>>();
 
   // ============================================
   // FETCH
@@ -156,6 +189,7 @@ const Scans = () => {
       if (!silent) setRefreshing(true);
       try {
         await Promise.all([fetchScans(), fetchStats()]);
+        setLastUpdated(new Date());
         if (!silent) showToast('Scans atualizados.', 'success');
       } finally {
         if (!silent) setRefreshing(false);
@@ -164,6 +198,21 @@ const Scans = () => {
     [fetchScans, fetchStats, showToast],
   );
 
+  // Guardar ref para usar dentro do SSE/polling
+  refreshAllRef.current = refreshAll;
+
+  /** Refresh debounced (evita rajadas SSE). */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current != null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      refreshAllRef.current?.(true);
+    }, 400);
+  }, []);
+
+  // Carga inicial
   useEffect(() => {
     (async () => {
       await refreshAll(true);
@@ -171,6 +220,190 @@ const Scans = () => {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ============================================
+  // REALTIME — SSE + fallback polling
+  // ============================================
+  useEffect(() => {
+    let disposed = false;
+    let pollTimer: number | null = null;
+
+    const startPollingFallback = () => {
+      if (pollTimer != null) return;
+      // 8s: mais rápido que o dashboard porque scans em curso mudam de estado
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          refreshAllRef.current?.(true);
+        }
+      }, 8_000);
+    };
+
+    const stopPollingFallback = () => {
+      if (pollTimer != null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const connectSSE = () => {
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        startPollingFallback();
+        return;
+      }
+
+      try {
+        const es = new EventSource('/api/realtime/events');
+        sseRef.current = es;
+
+        es.onopen = () => {
+          if (disposed) return;
+          setRealtimeConnected(true);
+          stopPollingFallback();
+          // Ao reconectar, puxa estado fresco
+          scheduleRefresh();
+        };
+
+        es.onmessage = (evt) => {
+          if (disposed) return;
+          let payload: RealtimeEvent | null = null;
+          try {
+            payload = JSON.parse(evt.data);
+          } catch {
+            return;
+          }
+          if (!payload) return;
+
+          // ---- Otimização local por evento (scanId + campos) ----
+          if (payload.scanId != null) {
+            const scanId = String(payload.scanId);
+
+            // Progress update em tempo real (sem refresh)
+            if (payload.type === 'scan.progress') {
+              setScans((prev) =>
+                prev.map((s) =>
+                  s.id === scanId
+                    ? {
+                        ...s,
+                        progress: typeof payload!.progress === 'number' ? payload!.progress : s.progress,
+                        status: (payload!.status as ApiScanStatus) ?? s.status,
+                      }
+                    : s,
+                ),
+              );
+            }
+
+            // Mudança de estado
+            if (
+              payload.type === 'scan.started' ||
+              payload.type === 'scan.paused' ||
+              payload.type === 'scan.resumed' ||
+              payload.type === 'scan.cancelled'
+            ) {
+              const newStatus: ApiScanStatus | undefined =
+                payload.type === 'scan.paused'
+                  ? 'paused'
+                  : payload.type === 'scan.resumed' || payload.type === 'scan.started'
+                  ? 'running'
+                  : (payload.status as ApiScanStatus | undefined);
+
+              if (newStatus) {
+                setScans((prev) =>
+                  prev.map((s) => (s.id === scanId ? { ...s, status: newStatus } : s)),
+                );
+              }
+            }
+
+            // Concluído / falhou → atualiza estado + score/vulns locais antes do refresh
+            if (payload.type === 'scan.completed' || payload.type === 'scan.failed') {
+              setScans((prev) =>
+                prev.map((s) =>
+                  s.id === scanId
+                    ? {
+                        ...s,
+                        status: payload!.type === 'scan.completed' ? 'completed' : 'failed',
+                        score: payload!.score ?? s.score,
+                        progress: 100,
+                      }
+                    : s,
+                ),
+              );
+              if (payload.type === 'scan.completed') {
+                showToast(`Scan concluído${payload.url ? ` — ${hostOf(payload.url)}` : ''}.`, 'success');
+              } else {
+                showToast(`Scan falhou${payload.url ? ` — ${hostOf(payload.url)}` : ''}.`, 'error');
+              }
+            }
+
+            // Removido → retira da lista imediatamente
+            if (payload.type === 'scan.deleted') {
+              setScans((prev) => prev.filter((s) => s.id !== scanId));
+              setSelected((prev) => {
+                const next = new Set(prev);
+                next.delete(scanId);
+                return next;
+              });
+            }
+          }
+
+          // Bulk delete
+          if (payload.type === 'scan.bulk_deleted' && Array.isArray(payload.ids)) {
+            const ids = payload.ids.map(String);
+            setScans((prev) => prev.filter((s) => !ids.includes(s.id)));
+            setSelected((prev) => {
+              const next = new Set(prev);
+              ids.forEach((id) => next.delete(id));
+              return next;
+            });
+          }
+
+          // Qualquer evento relevante → refresh debounced para sincronizar stats
+          if (REFRESH_EVENT_TYPES.has(payload.type)) {
+            scheduleRefresh();
+          }
+        };
+
+        es.onerror = () => {
+          if (disposed) return;
+          setRealtimeConnected(false);
+          startPollingFallback();
+        };
+      } catch {
+        startPollingFallback();
+      }
+    };
+
+    connectSSE();
+
+    // Segurança: se SSE não abrir em 20s, força polling
+    const safety = window.setTimeout(() => {
+      if (!disposed && !sseRef.current) startPollingFallback();
+    }, 20_000);
+
+    // Revalidar ao voltar à aba / focar
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshAllRef.current?.(true);
+    };
+    const onFocus = () => refreshAllRef.current?.(true);
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(safety);
+      if (refreshTimerRef.current != null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      stopPollingFallback();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+    };
+  }, [scheduleRefresh, showToast]);
 
   // ============================================
   // AÇÕES — Criar
@@ -202,6 +435,7 @@ const Scans = () => {
       setShowCookies(false);
       setOptCrawl(true);
       setOptReport(true);
+      // Inserção otimista no topo
       setScans((prev) => [mapScan(data), ...prev]);
       fetchStats();
     } catch (err: any) {
@@ -228,21 +462,32 @@ const Scans = () => {
   const handleTogglePause = async (scan: ScanRow) => {
     if (busy[scan.id]) return;
     setBusy((b) => ({ ...b, [scan.id]: true }));
+
     const isPaused = scan.status === 'paused';
     const endpoint = isPaused ? 'resume' : 'pause';
+    const optimisticStatus: ApiScanStatus = isPaused ? 'running' : 'paused';
+
+    // Otimista — reflete já
+    setScans((prev) =>
+      prev.map((s) => (s.id === scan.id ? { ...s, status: optimisticStatus } : s)),
+    );
 
     try {
       const { data } = await api.post<ApiScan>(`/api/scans/${scan.id}/${endpoint}`);
       setScans((prev) =>
         prev.map((s) =>
           s.id === scan.id
-            ? { ...s, status: data.status ?? (isPaused ? 'running' : 'paused') }
+            ? { ...s, status: data.status ?? optimisticStatus }
             : s,
         ),
       );
       showToast(isPaused ? 'Scan retomado.' : 'Scan pausado.', isPaused ? 'success' : 'info');
       fetchStats();
     } catch (err: any) {
+      // Reverter
+      setScans((prev) =>
+        prev.map((s) => (s.id === scan.id ? { ...s, status: scan.status } : s)),
+      );
       showToast(err?.response?.data?.error || 'Falha ao alterar estado do scan.', 'error');
     } finally {
       setBusy((b) => ({ ...b, [scan.id]: false }));
@@ -255,18 +500,24 @@ const Scans = () => {
   const handleDeleteOne = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const target = deleteTarget;
+
+    // Otimista — remove já
+    setScans((prev) => prev.filter((s) => s.id !== target.id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(target.id);
+      return next;
+    });
+
     try {
-      await api.delete(`/api/scans/${deleteTarget.id}`);
-      setScans((prev) => prev.filter((s) => s.id !== deleteTarget.id));
-      setSelected((prev) => {
-        const next = new Set(prev);
-        next.delete(deleteTarget.id);
-        return next;
-      });
+      await api.delete(`/api/scans/${target.id}`);
       showToast('Scan eliminado.', 'success');
       setDeleteTarget(null);
       fetchStats();
     } catch (err: any) {
+      // Reverter — volta a inserir
+      setScans((prev) => [target, ...prev].sort((a, b) => (a.date < b.date ? 1 : -1)));
       showToast(err?.response?.data?.error || 'Falha ao eliminar scan.', 'error');
     } finally {
       setDeleting(false);
@@ -275,18 +526,23 @@ const Scans = () => {
 
   const handleDeleteBulk = async () => {
     setDeleting(true);
+    const snapshot = scans;
+    const ids = Array.from(selected);
+
+    // Otimista
+    setScans((prev) => prev.filter((s) => !selected.has(s.id)));
+    setSelected(new Set());
+
     try {
-      const ids = Array.from(selected);
       await api.delete('/api/scans/bulk', {
         data: { ids },
         headers: { 'X-Confirm-Delete': 'yes' },
       });
-      setScans((prev) => prev.filter((s) => !selected.has(s.id)));
-      setSelected(new Set());
       showToast(`${ids.length} scan(s) eliminado(s).`, 'success');
       setDeleteBulkOpen(false);
       fetchStats();
     } catch (err: any) {
+      setScans(snapshot); // reverter
       showToast(err?.response?.data?.error || 'Falha ao eliminar scans.', 'error');
     } finally {
       setDeleting(false);
@@ -295,16 +551,21 @@ const Scans = () => {
 
   const handleDeleteAll = async () => {
     setDeleting(true);
+    const snapshot = scans;
+
+    // Otimista
+    setScans([]);
+    setSelected(new Set());
+
     try {
       await api.delete('/api/scans', {
         headers: { 'X-Confirm-Delete': 'yes' },
       });
-      setScans([]);
-      setSelected(new Set());
       showToast('Todos os scans foram eliminados.', 'success');
       setDeleteAllOpen(false);
       fetchStats();
     } catch (err: any) {
+      setScans(snapshot); // reverter
       showToast(err?.response?.data?.error || 'Falha ao eliminar todos os scans.', 'error');
     } finally {
       setDeleting(false);
@@ -374,7 +635,7 @@ const Scans = () => {
   // ============================================
   return (
     <>
-      {/* Título + Atualizar */}
+      {/* Título + Atualizar + Realtime */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">Scans de Segurança</h2>
@@ -383,6 +644,27 @@ const Scans = () => {
           </p>
         </div>
         <div className="flex items-center gap-2 self-start md:self-auto">
+          {/* Indicador realtime */}
+          <div
+            className={`px-3 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider flex items-center gap-1.5 ${
+              realtimeConnected
+                ? 'bg-[#00FF66]/10 border-[#00FF66]/40 text-[#00FF66]'
+                : 'bg-[#FFC107]/10 border-[#FFC107]/40 text-[#FFC107]'
+            }`}
+            title={
+              realtimeConnected
+                ? 'Ligado ao stream de eventos (SSE)'
+                : 'SSE indisponível — a usar polling a cada 8s'
+            }
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            {realtimeConnected ? 'REALTIME' : 'POLLING'}
+          </div>
+
           <button
             onClick={() => setDeleteAllOpen(true)}
             disabled={scans.length === 0}
@@ -515,15 +797,12 @@ const Scans = () => {
             </div>
           </div>
 
-          {/* ============================================ */}
-          {/* OPÇÕES AVANÇADAS                              */}
-          {/* ============================================ */}
+          {/* OPÇÕES AVANÇADAS */}
           <div className="p-4 rounded-xl bg-black/40 border border-[#1A2130] space-y-3">
             <p className="text-[10px] font-mono font-semibold text-gray-400 uppercase tracking-wider">
               Opções Avançadas
             </p>
 
-            {/* Autenticação */}
             <label className="flex items-center gap-3 cursor-pointer group">
               <input
                 type="checkbox"
@@ -536,7 +815,6 @@ const Scans = () => {
               </span>
             </label>
 
-            {/* Cookies (só aparecem quando optAuth está marcado) */}
             {optAuth && (
               <div className="pl-7 space-y-2">
                 <button
@@ -567,7 +845,6 @@ const Scans = () => {
               </div>
             )}
 
-            {/* Crawl */}
             <label className="flex items-center gap-3 cursor-pointer group">
               <input
                 type="checkbox"
@@ -580,7 +857,6 @@ const Scans = () => {
               </span>
             </label>
 
-            {/* Relatório PDF */}
             <label className="flex items-center gap-3 cursor-pointer group">
               <input
                 type="checkbox"
@@ -796,7 +1072,19 @@ const Scans = () => {
             <span className="text-white font-bold">{totalScans}</span> scans
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00FF66]" /> Atualizado agora
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            Última atualização:{' '}
+            <span className="text-white font-bold">
+              {refreshing
+                ? 'a atualizar…'
+                : lastUpdated
+                ? lastUpdated.toLocaleTimeString('pt-PT')
+                : '—'}
+            </span>
           </span>
         </div>
       </div>

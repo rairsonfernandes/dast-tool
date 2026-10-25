@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import SeverityBadge from '@/components/dashboard/SeverityBadge';
 import Modal from '@/components/dashboard/Modal';
@@ -10,7 +10,7 @@ import { api } from '@/lib/api';
 // ============================================
 type ApiSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 type ApiScanStatus = 'queued' | 'pending' | 'running' | 'completed' | 'failed' | 'paused';
-type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';   // ← NOVO tipo
+type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
 interface ApiScan {
   id: string;
@@ -51,6 +51,13 @@ interface ApiVuln {
   status?: string;
 }
 
+/** Payload SSE. Ex: { type: 'scan.progress', scanId, progress } */
+interface RealtimeEvent {
+  type: string;
+  ts?: number;
+  [key: string]: any;
+}
+
 // ============================================
 // HELPERS
 // ============================================
@@ -59,7 +66,7 @@ const SEV_MAP: Record<ApiSeverity, Severity> = {
   high: 'HIGH',
   medium: 'MEDIUM',
   low: 'LOW',
-  info: 'INFO',       // ← ANTES era 'LOW'
+  info: 'INFO',
 };
 
 const STATUS_LABEL: Record<ApiScanStatus, string> = {
@@ -104,6 +111,23 @@ function fmtDateTime(iso?: string | null): string {
   }
 }
 
+/** Eventos SSE relevantes para esta página. */
+const REFRESH_EVENT_TYPES = new Set([
+  'scan.started',
+  'scan.progress',
+  'scan.completed',
+  'scan.failed',
+  'scan.cancelled',
+  'scan.paused',
+  'scan.resumed',
+  'scan.deleted',
+  'vulnerability.created',
+  'vulnerability.updated',
+  'mitigation.started',
+  'mitigation.completed',
+  'mitigation.failed',
+]);
+
 // ============================================
 // COMPONENTE
 // ============================================
@@ -117,23 +141,31 @@ const ScanDetail = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
+
+  // Refs realtime
+  const sseRef = useRef<EventSource | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const loadRef = useRef<() => Promise<void>>();
+  const scanStatusRef = useRef<ApiScanStatus | undefined>(undefined);
 
   // ============================================
   // FETCH
   // ============================================
   const load = useCallback(async () => {
     if (!id) return;
-    setLoading(true);
     setError(null);
 
     try {
       const scanRes = await api.get<ApiScan>(`/api/scans/${id}`);
       const scanData = scanRes.data;
       setScan(scanData);
+      scanStatusRef.current = scanData.status;
 
       try {
         const { data } = await api.get<ApiVuln[] | { items: ApiVuln[] }>(
@@ -150,6 +182,8 @@ const ScanDetail = () => {
           setVulns([]);
         }
       }
+
+      setLastUpdated(new Date());
     } catch (err: any) {
       const msg = err?.response?.data?.error || 'Falha ao carregar o scan.';
       setError(msg);
@@ -160,9 +194,208 @@ const ScanDetail = () => {
     }
   }, [id]);
 
+  loadRef.current = load;
+
+  /** Refresh debounced (evita rajadas SSE). */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current != null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      loadRef.current?.();
+    }, 300);
+  }, []);
+
+  // Carga inicial
   useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // ============================================
+  // REALTIME — SSE + fallback polling
+  // ============================================
+  useEffect(() => {
+    if (!id) return;
+
+    let disposed = false;
+    let pollTimer: number | null = null;
+
+    const startPollingFallback = () => {
+      if (pollTimer != null) return;
+      // 5s: agressivo, porque queremos ver progresso do scan ao vivo
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          loadRef.current?.();
+        }
+      }, 5_000);
+    };
+
+    const stopPollingFallback = () => {
+      if (pollTimer != null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const connectSSE = () => {
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        startPollingFallback();
+        return;
+      }
+
+      try {
+        const es = new EventSource('/api/realtime/events');
+        sseRef.current = es;
+
+        es.onopen = () => {
+          if (disposed) return;
+          setRealtimeConnected(true);
+          stopPollingFallback();
+          scheduleRefresh();
+        };
+
+        es.onmessage = (evt) => {
+          if (disposed) return;
+          let payload: RealtimeEvent | null = null;
+          try {
+            payload = JSON.parse(evt.data);
+          } catch {
+            return;
+          }
+          if (!payload) return;
+
+          const thisScanId = String(id);
+          const isThisScan = payload.scanId != null && String(payload.scanId) === thisScanId;
+
+          // ---- Otimizações locais só para ESTE scan ----
+          if (isThisScan) {
+            // Progresso em tempo real (sem refresh)
+            if (payload.type === 'scan.progress') {
+              setScan((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      progress:
+                        typeof payload!.progress === 'number'
+                          ? payload!.progress
+                          : prev.progress,
+                      status: (payload!.status as ApiScanStatus) ?? prev.status,
+                    }
+                  : prev,
+              );
+            }
+
+            // Pausa/resume/started
+            if (
+              payload.type === 'scan.paused' ||
+              payload.type === 'scan.resumed' ||
+              payload.type === 'scan.started'
+            ) {
+              const newStatus: ApiScanStatus =
+                payload.type === 'scan.paused'
+                  ? 'paused'
+                  : 'running';
+              setScan((prev) => (prev ? { ...prev, status: newStatus } : prev));
+            }
+
+            // Concluído / falhou
+            if (payload.type === 'scan.completed' || payload.type === 'scan.failed') {
+              setScan((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      status: payload!.type === 'scan.completed' ? 'completed' : 'failed',
+                      progress: 100,
+                      score: payload!.score ?? prev.score,
+                      completed_at: payload!.completed_at ?? prev.completed_at,
+                      duration_seconds: payload!.duration_seconds ?? prev.duration_seconds,
+                    }
+                  : prev,
+              );
+              if (payload.type === 'scan.completed') {
+                showToast('Scan concluído.', 'success');
+              } else {
+                showToast('Scan falhou.', 'error');
+              }
+            }
+          }
+
+          // Removido em qualquer lado → sai da página
+          if (payload.type === 'scan.deleted' && isThisScan) {
+            showToast('Este scan foi eliminado.', 'error');
+            nav('/scans');
+            return;
+          }
+
+          // Vulnerabilidades do scan → pode afetar contagem/tabela
+          if (
+            payload.type === 'vulnerability.created' ||
+            payload.type === 'vulnerability.updated' ||
+            payload.type === 'mitigation.completed' ||
+            payload.type === 'mitigation.failed'
+          ) {
+            if (payload.scanId == null || isThisScan) {
+              scheduleRefresh();
+            }
+          }
+
+          // Qualquer evento relevante → refresh debounced
+          if (REFRESH_EVENT_TYPES.has(payload.type)) {
+            // Se o evento não traz scanId, só refresca se o scan atual ainda não está terminado
+            if (
+              payload.scanId == null &&
+              scanStatusRef.current &&
+              ['completed', 'failed'].includes(scanStatusRef.current)
+            ) {
+              return;
+            }
+            scheduleRefresh();
+          }
+        };
+
+        es.onerror = () => {
+          if (disposed) return;
+          setRealtimeConnected(false);
+          startPollingFallback();
+        };
+      } catch {
+        startPollingFallback();
+      }
+    };
+
+    connectSSE();
+
+    const safety = window.setTimeout(() => {
+      if (!disposed && !sseRef.current) startPollingFallback();
+    }, 20_000);
+
+    // Revalidar ao voltar à aba / focar
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') loadRef.current?.();
+    };
+    const onFocus = () => loadRef.current?.();
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(safety);
+      if (refreshTimerRef.current != null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      stopPollingFallback();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+    };
+  }, [id, nav, scheduleRefresh, showToast]);
 
   // ============================================
   // AÇÕES
@@ -193,6 +426,11 @@ const ScanDetail = () => {
     if (!scan) return;
     setToggling(true);
     const endpoint = scan.status === 'paused' ? 'resume' : 'pause';
+    const optimisticStatus: ApiScanStatus = endpoint === 'pause' ? 'paused' : 'running';
+
+    // Otimista — reflete já
+    setScan((prev) => (prev ? { ...prev, status: optimisticStatus } : prev));
+
     try {
       const { data } = await api.post<ApiScan>(`/api/scans/${scan.id}/${endpoint}`);
       setScan(data);
@@ -202,6 +440,8 @@ const ScanDetail = () => {
       );
       await load();
     } catch (err: any) {
+      // Reverter
+      setScan((prev) => (prev ? { ...prev, status: scan.status } : prev));
       showToast(err?.response?.data?.error || 'Falha ao alterar estado.', 'error');
     } finally {
       setToggling(false);
@@ -348,9 +588,31 @@ const ScanDetail = () => {
     <>
       {/* Topo */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button onClick={() => nav('/scans')} className="px-4 py-2 bg-[#11151E] border border-[#1A2130] hover:border-[#00FF66] hover:text-[#00FF66] text-gray-300 text-xs font-mono font-bold rounded-lg flex items-center gap-2 transition-all">
-          <i className="fa-solid fa-arrow-left text-[10px]" /> Voltar
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => nav('/scans')} className="px-4 py-2 bg-[#11151E] border border-[#1A2130] hover:border-[#00FF66] hover:text-[#00FF66] text-gray-300 text-xs font-mono font-bold rounded-lg flex items-center gap-2 transition-all">
+            <i className="fa-solid fa-arrow-left text-[10px]" /> Voltar
+          </button>
+          {/* Indicador realtime */}
+          <div
+            className={`px-3 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider flex items-center gap-1.5 ${
+              realtimeConnected
+                ? 'bg-[#00FF66]/10 border-[#00FF66]/40 text-[#00FF66]'
+                : 'bg-[#FFC107]/10 border-[#FFC107]/40 text-[#FFC107]'
+            }`}
+            title={
+              realtimeConnected
+                ? 'Ligado ao stream de eventos (SSE)'
+                : 'SSE indisponível — a usar polling a cada 5s'
+            }
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            {realtimeConnected ? 'REALTIME' : 'POLLING'}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           {canToggle && (
             <button onClick={handleTogglePause} disabled={toggling} className={`px-4 py-2.5 font-semibold text-sm rounded-lg flex items-center gap-2 transition-all disabled:opacity-60 ${scan.status === 'paused' ? 'bg-[#00FF66] text-black hover:bg-[#00E676] shadow-[0_0_20px_rgba(0,255,102,0.3)]' : 'bg-[#FFC107] text-black hover:bg-amber-400'}`}>
@@ -380,6 +642,11 @@ const ScanDetail = () => {
             <span className="text-gray-500 font-mono text-xs">Criado em {fmtDateTime(scan.created_at)}</span>
             {scan.completed_at && (
               <span className="text-gray-500 font-mono text-xs">Concluído em {fmtDateTime(scan.completed_at)}</span>
+            )}
+            {lastUpdated && (
+              <span className="text-gray-500 font-mono text-xs">
+                · atualizado {lastUpdated.toLocaleTimeString('pt-PT')}
+              </span>
             )}
           </div>
         </div>
@@ -423,7 +690,7 @@ const ScanDetail = () => {
               {vulnsBySeverity.high > 0 && <span className="text-[#FF8800]">H:{vulnsBySeverity.high}</span>}
               {vulnsBySeverity.medium > 0 && <span className="text-[#FFC107]">M:{vulnsBySeverity.medium}</span>}
               {vulnsBySeverity.low > 0 && <span className="text-[#00B0FF]">L:{vulnsBySeverity.low}</span>}
-              {vulnsBySeverity.info > 0 && <span className="text-gray-400">I:{vulnsBySeverity.info}</span>}   {/* ← NOVO */}
+              {vulnsBySeverity.info > 0 && <span className="text-gray-400">I:{vulnsBySeverity.info}</span>}
             </div>
           )}
         </div>
@@ -487,7 +754,7 @@ const ScanDetail = () => {
               {vulns.map((v) => (
                 <tr key={v.id}>
                   <td className="py-4 px-6 whitespace-nowrap">
-                    <SeverityBadge severity={SEV_MAP[v.severity] || 'INFO'} />   {/* ← fallback mudou */}
+                    <SeverityBadge severity={SEV_MAP[v.severity] || 'INFO'} />
                   </td>
                   <td className="py-4 px-4">
                     <p className="font-semibold text-white">{v.title || v.description || '—'}</p>

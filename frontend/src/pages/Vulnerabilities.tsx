@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SeverityBadge from '@/components/dashboard/SeverityBadge';
 import Modal from '@/components/dashboard/Modal';
 import { useToast } from '@/layouts/DashboardLayout';
@@ -42,6 +42,13 @@ interface ApiVuln {
   created_at?: string;
   status?: string;
   remediation?: string;
+}
+
+/** Payload SSE. Ex: { type: 'vulnerability.updated', vulnerabilityId, status } */
+interface RealtimeEvent {
+  type: string;
+  ts?: number;
+  [key: string]: any;
 }
 
 const SEV_MAP: Record<string, Severity> = {
@@ -98,6 +105,22 @@ function sevTextColor(s: Severity): string {
   }
 }
 
+/** Eventos SSE relevantes para esta página. */
+const REFRESH_EVENT_TYPES = new Set([
+  'vulnerability.created',
+  'vulnerability.updated',
+  'vulnerability.fixed',
+  'vulnerability.ignored',
+  'vulnerability.deleted',
+  'vulnerability.bulk_deleted',
+  'finding.fixed',
+  'finding.ignored',
+  'mitigation.started',
+  'mitigation.completed',
+  'mitigation.failed',
+  'scan.completed',
+]);
+
 // ============================================
 // COMPONENTE
 // ============================================
@@ -108,6 +131,8 @@ const Vulnerabilities = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [filter, setFilter] = useState<'ALL' | Severity>('ALL');
   const [search, setSearch] = useState('');
@@ -121,6 +146,11 @@ const Vulnerabilities = () => {
   const [deleteBulkOpen, setDeleteBulkOpen] = useState(false);
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Refs realtime
+  const sseRef = useRef<EventSource | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const loadRef = useRef<(isRefresh?: boolean) => Promise<void>>();
 
   // ============================================
   // FETCH
@@ -156,6 +186,7 @@ const Vulnerabilities = () => {
           return next;
         });
 
+        setLastUpdated(new Date());
         if (isRefresh) showToast('Vulnerabilidades atualizadas.', 'success');
       } catch (err: any) {
         const msg = err?.response?.data?.error || 'Falha ao carregar vulnerabilidades.';
@@ -171,10 +202,168 @@ const Vulnerabilities = () => {
     [showToast],
   );
 
+  loadRef.current = load;
+
+  /** Refresh debounced. */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current != null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      loadRef.current?.(true);
+    }, 400);
+  }, []);
+
+  // Carga inicial
   useEffect(() => {
     load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ============================================
+  // REALTIME — SSE + fallback polling
+  // ============================================
+  useEffect(() => {
+    let disposed = false;
+    let pollTimer: number | null = null;
+
+    const startPollingFallback = () => {
+      if (pollTimer != null) return;
+      // 10s: equilíbrio entre frescura e carga
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          loadRef.current?.(false);
+        }
+      }, 10_000);
+    };
+
+    const stopPollingFallback = () => {
+      if (pollTimer != null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const connectSSE = () => {
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        startPollingFallback();
+        return;
+      }
+
+      try {
+        const es = new EventSource('/api/realtime/events');
+        sseRef.current = es;
+
+        es.onopen = () => {
+          if (disposed) return;
+          setRealtimeConnected(true);
+          stopPollingFallback();
+          scheduleRefresh();
+        };
+
+        es.onmessage = (evt) => {
+          if (disposed) return;
+          let payload: RealtimeEvent | null = null;
+          try {
+            payload = JSON.parse(evt.data);
+          } catch {
+            return;
+          }
+          if (!payload) return;
+
+          // ---- Otimizações locais por evento ----
+          const vulnIdRaw = payload.vulnerabilityId ?? payload.findingId;
+          if (vulnIdRaw != null && payload.status != null) {
+            const vulnId = String(vulnIdRaw);
+            const newStatus = normalizeStatus(payload.status);
+            setVulns((prev) =>
+              prev.map((v) => (v.id === vulnId ? { ...v, status: newStatus } : v)),
+            );
+            // Atualiza o modal aberto, se for a mesma vuln
+            setDetailsOpen((prev) =>
+              prev && prev.id === vulnId ? { ...prev, status: newStatus } : prev,
+            );
+          }
+
+          // Remoção imediata
+          if (payload.type === 'vulnerability.deleted' && vulnIdRaw != null) {
+            const vulnId = String(vulnIdRaw);
+            setVulns((prev) => prev.filter((v) => v.id !== vulnId));
+            setSelected((prev) => {
+              const next = new Set(prev);
+              next.delete(vulnId);
+              return next;
+            });
+            setDetailsOpen((prev) => (prev && prev.id === vulnId ? null : prev));
+          }
+
+          if (payload.type === 'vulnerability.bulk_deleted' && Array.isArray(payload.ids)) {
+            const ids = payload.ids.map(String);
+            setVulns((prev) => prev.filter((v) => !ids.includes(v.id)));
+            setSelected((prev) => {
+              const next = new Set(prev);
+              ids.forEach((id) => next.delete(id));
+              return next;
+            });
+          }
+
+          // Toasts em eventos de mitigação
+          if (payload.type === 'mitigation.completed') {
+            showToast('Mitigação concluída.', 'success');
+          } else if (payload.type === 'mitigation.failed') {
+            showToast('Mitigação falhou.', 'error');
+          } else if (payload.type === 'scan.completed') {
+            showToast('Novo scan concluído. Vulnerabilidades atualizadas.', 'info');
+          }
+
+          // Qualquer evento relevante → refresh debounced (para consistência total)
+          if (REFRESH_EVENT_TYPES.has(payload.type)) {
+            scheduleRefresh();
+          }
+        };
+
+        es.onerror = () => {
+          if (disposed) return;
+          setRealtimeConnected(false);
+          startPollingFallback();
+        };
+      } catch {
+        startPollingFallback();
+      }
+    };
+
+    connectSSE();
+
+    const safety = window.setTimeout(() => {
+      if (!disposed && !sseRef.current) startPollingFallback();
+    }, 20_000);
+
+    // Revalidar ao voltar à aba / focar
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') loadRef.current?.(false);
+    };
+    const onFocus = () => loadRef.current?.(false);
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(safety);
+      if (refreshTimerRef.current != null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      stopPollingFallback();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+    };
+  }, [scheduleRefresh, showToast]);
 
   // ============================================
   // DERIVADOS
@@ -231,12 +420,23 @@ const Vulnerabilities = () => {
   const handleConfirmFix = async () => {
     if (!fixOpen) return;
     setFixing(true);
+    const target = fixOpen;
+
+    // Otimista — passa já para 'fixing'
+    setVulns((prev) =>
+      prev.map((v) => (v.id === target.id ? { ...v, status: 'fixing' } : v)),
+    );
+
     try {
-      await api.post(`/api/vulnerabilities/${fixOpen.id}/fix`);
-      showToast(`Correção iniciada para ${fixOpen.target}.`, 'success');
+      await api.post(`/api/vulnerabilities/${target.id}/fix`);
+      showToast(`Correção iniciada para ${target.target}.`, 'success');
       setFixOpen(null);
       await load(true);
     } catch (err: any) {
+      // Reverter
+      setVulns((prev) =>
+        prev.map((v) => (v.id === target.id ? { ...v, status: target.status } : v)),
+      );
       showToast(err?.response?.data?.error || 'Falha ao iniciar correção.', 'error');
     } finally {
       setFixing(false);
@@ -244,11 +444,22 @@ const Vulnerabilities = () => {
   };
 
   const handleUpdateStatus = async (v: Vuln, status: VulnStatus) => {
+    const prevStatus = v.status;
+
+    // Otimista — muda já
+    setVulns((prev) => prev.map((x) => (x.id === v.id ? { ...x, status } : x)));
+    setDetailsOpen((prev) => (prev && prev.id === v.id ? { ...prev, status } : prev));
+
     try {
       await api.patch(`/api/vulnerabilities/${v.id}`, { status });
       showToast(`Estado atualizado: ${STATUS_LABEL[status]}.`, 'success');
       await load(true);
     } catch (err: any) {
+      // Reverter
+      setVulns((prev) => prev.map((x) => (x.id === v.id ? { ...x, status: prevStatus } : x)));
+      setDetailsOpen((prev) =>
+        prev && prev.id === v.id ? { ...prev, status: prevStatus } : prev,
+      );
       showToast(err?.response?.data?.error || 'Falha ao atualizar.', 'error');
     }
   };
@@ -256,17 +467,23 @@ const Vulnerabilities = () => {
   const handleDeleteOne = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const target = deleteTarget;
+
+    // Otimista — remove já
+    setVulns((prev) => prev.filter((v) => v.id !== target.id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(target.id);
+      return next;
+    });
+
     try {
-      await api.delete(`/api/vulnerabilities/${deleteTarget.id}`);
-      setVulns((prev) => prev.filter((v) => v.id !== deleteTarget.id));
-      setSelected((prev) => {
-        const next = new Set(prev);
-        next.delete(deleteTarget.id);
-        return next;
-      });
+      await api.delete(`/api/vulnerabilities/${target.id}`);
       showToast('Vulnerabilidade eliminada.', 'success');
       setDeleteTarget(null);
     } catch (err: any) {
+      // Reverter — reinsere no início
+      setVulns((prev) => [target, ...prev]);
       showToast(err?.response?.data?.error || 'Falha ao eliminar.', 'error');
     } finally {
       setDeleting(false);
@@ -275,17 +492,22 @@ const Vulnerabilities = () => {
 
   const handleDeleteBulk = async () => {
     setDeleting(true);
+    const snapshot = vulns;
+    const ids = Array.from(selected);
+
+    // Otimista
+    setVulns((prev) => prev.filter((v) => !selected.has(v.id)));
+    setSelected(new Set());
+
     try {
-      const ids = Array.from(selected);
       await api.delete('/api/vulnerabilities/bulk', {
         data: { ids },
         headers: { 'X-Confirm-Delete': 'yes' },
       });
-      setVulns((prev) => prev.filter((v) => !selected.has(v.id)));
-      setSelected(new Set());
       showToast(`${ids.length} vulnerabilidade(s) eliminada(s).`, 'success');
       setDeleteBulkOpen(false);
     } catch (err: any) {
+      setVulns(snapshot); // reverter
       showToast(err?.response?.data?.error || 'Falha ao eliminar.', 'error');
     } finally {
       setDeleting(false);
@@ -294,15 +516,20 @@ const Vulnerabilities = () => {
 
   const handleDeleteAll = async () => {
     setDeleting(true);
+    const snapshot = vulns;
+
+    // Otimista
+    setVulns([]);
+    setSelected(new Set());
+
     try {
       await api.delete('/api/vulnerabilities', {
         headers: { 'X-Confirm-Delete': 'yes' },
       });
-      setVulns([]);
-      setSelected(new Set());
       showToast('Todas as vulnerabilidades foram eliminadas.', 'success');
       setDeleteAllOpen(false);
     } catch (err: any) {
+      setVulns(snapshot); // reverter
       showToast(err?.response?.data?.error || 'Falha ao eliminar todas.', 'error');
     } finally {
       setDeleting(false);
@@ -342,6 +569,27 @@ const Vulnerabilities = () => {
           </p>
         </div>
         <div className="flex items-center gap-2 self-start md:self-auto">
+          {/* Indicador realtime */}
+          <div
+            className={`px-3 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider flex items-center gap-1.5 ${
+              realtimeConnected
+                ? 'bg-[#00FF66]/10 border-[#00FF66]/40 text-[#00FF66]'
+                : 'bg-[#FFC107]/10 border-[#FFC107]/40 text-[#FFC107]'
+            }`}
+            title={
+              realtimeConnected
+                ? 'Ligado ao stream de eventos (SSE)'
+                : 'SSE indisponível — a usar polling a cada 10s'
+            }
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            {realtimeConnected ? 'REALTIME' : 'POLLING'}
+          </div>
+
           <button
             onClick={() => setDeleteAllOpen(true)}
             disabled={vulns.length === 0}
@@ -350,6 +598,14 @@ const Vulnerabilities = () => {
           >
             <i className="fa-solid fa-trash text-[10px]" />
             <span className="hidden sm:inline">Eliminar Todas</span>
+          </button>
+          <button
+            onClick={() => load(true)}
+            disabled={refreshing}
+            className="px-3 py-2.5 bg-[#11151E] hover:bg-[#1A2130] border border-[#1A2130] hover:border-[#00FF66] text-gray-300 hover:text-[#00FF66] text-xs font-mono font-bold rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-40"
+          >
+            <i className={`fa-solid fa-arrows-rotate ${refreshing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Atualizar</span>
           </button>
           <button
             onClick={handleExport}
@@ -614,7 +870,19 @@ const Vulnerabilities = () => {
           A mostrar <span className="text-white font-bold">{filtered.length}</span> de <span className="text-white font-bold">{vulns.length}</span> vulnerabilidades
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#00FF66]" /> Última atualização: {refreshing ? 'a atualizar…' : 'agora'}
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+            }`}
+          />
+          Última atualização:{' '}
+          <span className="text-white font-bold">
+            {refreshing
+              ? 'a atualizar…'
+              : lastUpdated
+              ? lastUpdated.toLocaleTimeString('pt-PT')
+              : '—'}
+          </span>
         </span>
       </div>
 

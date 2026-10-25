@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Modal from '@/components/dashboard/Modal';
 import { useToast } from '@/layouts/DashboardLayout';
 import { api } from '@/lib/api';
@@ -18,7 +18,6 @@ interface Report {
   date: string;
   size: string;
   status: string;
-  /** Token assinado devolvido pelo backend — usado para download sem 401 */
   download_token?: string;
 }
 
@@ -44,6 +43,13 @@ interface ReportStats {
   days: ReportStatDay[];
   total: number;
   range_days: number;
+}
+
+/** Payload SSE. Ex: { type: 'report.created', reportId, ... } */
+interface RealtimeEvent {
+  type: string;
+  ts?: number;
+  [key: string]: any;
 }
 
 // ============================================
@@ -96,6 +102,17 @@ const PERIOD_OPTIONS = [
   { value: 'all', label: 'Tudo' },
 ];
 
+/** Eventos SSE relevantes. */
+const REFRESH_EVENT_TYPES = new Set([
+  'report.created',
+  'report.ready',
+  'report.failed',
+  'report.deleted',
+  'report.bulk_deleted',
+  'report.generating',
+  'scan.completed', // um scan concluído pode auto-gerar relatório
+]);
+
 // ============================================
 // COMPONENTE
 // ============================================
@@ -107,22 +124,28 @@ const Reports = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [filter, setFilter] = useState<'ALL' | 'PDF' | 'CSV'>('ALL');
   const [newReportOpen, setNewReportOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
 
-  // Form do modal
   const [genType, setGenType] = useState<ReportType>('executive');
   const [genFormat, setGenFormat] = useState<Format>('PDF');
   const [genPeriod, setGenPeriod] = useState('last_7_days');
 
-  // Seleção + delete
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<Report | null>(null);
   const [deleteBulkOpen, setDeleteBulkOpen] = useState(false);
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Refs realtime
+  const sseRef = useRef<EventSource | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const loadRef = useRef<(isRefresh?: boolean) => Promise<void>>();
+  const loadStatsRef = useRef<() => Promise<void>>();
 
   // ============================================
   // FETCH
@@ -136,6 +159,8 @@ const Reports = () => {
       setStats(null);
     }
   }, []);
+
+  loadStatsRef.current = loadStats;
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -175,6 +200,7 @@ const Reports = () => {
           return next;
         });
 
+        setLastUpdated(new Date());
         if (isRefresh) showToast('Relatórios atualizados.', 'success');
       } catch (err: any) {
         const msg = err?.response?.data?.error || 'Falha ao carregar relatórios.';
@@ -191,10 +217,175 @@ const Reports = () => {
     [loadStats, showToast],
   );
 
+  loadRef.current = load;
+
+  /** Refresh debounced. */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current != null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      loadRef.current?.(true);
+    }, 400);
+  }, []);
+
+  // Carga inicial
   useEffect(() => {
     load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ============================================
+  // REALTIME — SSE + fallback polling
+  // ============================================
+  useEffect(() => {
+    let disposed = false;
+    let pollTimer: number | null = null;
+
+    const startPollingFallback = () => {
+      if (pollTimer != null) return;
+      // 15s: relatórios mudam pouco; polling leve é suficiente
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          loadRef.current?.(false);
+        }
+      }, 15_000);
+    };
+
+    const stopPollingFallback = () => {
+      if (pollTimer != null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const connectSSE = () => {
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        startPollingFallback();
+        return;
+      }
+
+      try {
+        const es = new EventSource('/api/realtime/events');
+        sseRef.current = es;
+
+        es.onopen = () => {
+          if (disposed) return;
+          setRealtimeConnected(true);
+          stopPollingFallback();
+          scheduleRefresh();
+        };
+
+        es.onmessage = (evt) => {
+          if (disposed) return;
+          let payload: RealtimeEvent | null = null;
+          try {
+            payload = JSON.parse(evt.data);
+          } catch {
+            return;
+          }
+          if (!payload) return;
+
+          const reportIdRaw = payload.reportId ?? payload.id;
+          const reportId = reportIdRaw != null ? String(reportIdRaw) : null;
+
+          // ---- Otimizações locais ----
+          // Relatório pronto / estado atualizado
+          if (
+            reportId &&
+            (payload.type === 'report.ready' ||
+              payload.type === 'report.generating' ||
+              payload.type === 'report.failed')
+          ) {
+            const newStatus =
+              payload.type === 'report.ready'
+                ? 'ready'
+                : payload.type === 'report.generating'
+                ? 'generating'
+                : 'failed';
+            setReports((prev) =>
+              prev.map((r) => (r.id === reportId ? { ...r, status: newStatus } : r)),
+            );
+            if (payload.type === 'report.ready') {
+              showToast(`Relatório "${payload.name ?? reportId}" pronto.`, 'success');
+            } else if (payload.type === 'report.failed') {
+              showToast(`Relatório "${payload.name ?? reportId}" falhou.`, 'error');
+            }
+          }
+
+          // Relatório removido
+          if (payload.type === 'report.deleted' && reportId) {
+            setReports((prev) => prev.filter((r) => r.id !== reportId));
+            setSelected((prev) => {
+              const next = new Set(prev);
+              next.delete(reportId);
+              return next;
+            });
+          }
+
+          if (payload.type === 'report.bulk_deleted' && Array.isArray(payload.ids)) {
+            const ids = payload.ids.map(String);
+            setReports((prev) => prev.filter((r) => !ids.includes(r.id)));
+            setSelected((prev) => {
+              const next = new Set(prev);
+              ids.forEach((id) => next.delete(id));
+              return next;
+            });
+          }
+
+          // Toasts de scan (auto-relatório)
+          if (payload.type === 'scan.completed') {
+            showToast('Scan concluído. Verifica novos relatórios.', 'info');
+          }
+
+          // Qualquer evento relevante → refresh debounced para sincronizar stats/gráfico
+          if (REFRESH_EVENT_TYPES.has(payload.type)) {
+            scheduleRefresh();
+          }
+        };
+
+        es.onerror = () => {
+          if (disposed) return;
+          setRealtimeConnected(false);
+          startPollingFallback();
+        };
+      } catch {
+        startPollingFallback();
+      }
+    };
+
+    connectSSE();
+
+    const safety = window.setTimeout(() => {
+      if (!disposed && !sseRef.current) startPollingFallback();
+    }, 20_000);
+
+    // Revalidar ao voltar à aba / focar
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') loadRef.current?.(false);
+    };
+    const onFocus = () => loadRef.current?.(false);
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(safety);
+      if (refreshTimerRef.current != null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      stopPollingFallback();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+    };
+  }, [scheduleRefresh, showToast]);
 
   // ============================================
   // DERIVADOS
@@ -227,11 +418,12 @@ const Reports = () => {
   const someSelected = selected.size > 0;
 
   // ============================================
-  // AÇÕES — Download (fix do 401)
+  // AÇÕES — Download
   // ============================================
   const handleDownload = async (r: Report) => {
+    const API_URL = import.meta.env.VITE_API_URL || 'https://dast-tool-backend.onrender.com';
+
     try {
-      // 1) tenta via fetch + blob (envia Bearer corretamente)
       const res = await api.get(`/api/reports/${r.id}/download`, { responseType: 'blob' });
       const mime = r.format === 'CSV' ? 'text/csv' : 'application/pdf';
       const blob = new Blob([res.data], { type: mime });
@@ -245,9 +437,8 @@ const Reports = () => {
       URL.revokeObjectURL(url);
       showToast(`Download de "${r.name}" concluído.`, 'success');
     } catch (err: any) {
-      // 2) fallback: abre com download_token na URL (sem 401)
       if (r.download_token) {
-        const url = `/api/reports/${r.id}/download?token=${encodeURIComponent(r.download_token)}`;
+        const url = `${API_URL}/api/reports/${r.id}/download?token=${encodeURIComponent(r.download_token)}`;
         window.open(url, '_blank');
         showToast('A abrir download…', 'info');
         return;
@@ -257,10 +448,12 @@ const Reports = () => {
   };
 
   // ============================================
-  // AÇÕES — Gerar
+  // AÇÕES — Gerar (otimista + confirmação via SSE)
   // ============================================
   const handleGenerate = async () => {
     setGenerating(true);
+    const API_URL = import.meta.env.VITE_API_URL || 'https://dast-tool-backend.onrender.com';
+
     try {
       const { data } = await api.post<ApiReport & { download_token?: string }>('/api/reports', {
         type: genType,
@@ -270,10 +463,29 @@ const Reports = () => {
       showToast('Relatório gerado.', 'success');
       setNewReportOpen(false);
 
-      // Se o backend devolveu download_token, abre logo o download
       if (data.download_token) {
-        const url = `/api/reports/${data.id}/download?token=${encodeURIComponent(data.download_token)}`;
+        const url = `${API_URL}/api/reports/${data.id}/download?token=${encodeURIComponent(data.download_token)}`;
         window.open(url, '_blank');
+      }
+
+      // Inserção otimista no topo (o SSE confirma)
+      if (data?.id) {
+        const meta = typeMeta(data.type);
+        const format: Format = (data.format || '').toUpperCase() === 'CSV' ? 'CSV' : 'PDF';
+        const optimistic: Report = {
+          id: data.id,
+          name: data.name,
+          type: meta.label,
+          typeColor: meta.color,
+          format,
+          date: fmtDate(data.created_at),
+          size: fmtSize(data.file_size_bytes),
+          status: data.status || 'ready',
+          download_token: data.download_token,
+        };
+        setReports((prev) =>
+          prev.some((p) => p.id === optimistic.id) ? prev : [optimistic, ...prev],
+        );
       }
 
       await load(true);
@@ -292,67 +504,77 @@ const Reports = () => {
   };
 
   // ============================================
-  // AÇÕES — Delete individual
+  // AÇÕES — Delete
   // ============================================
   const handleDeleteOne = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const target = deleteTarget;
+
+    // Otimista — remove já
+    setReports((prev) => prev.filter((r) => r.id !== target.id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(target.id);
+      return next;
+    });
+
     try {
-      await api.delete(`/api/reports/${deleteTarget.id}`);
-      setReports((prev) => prev.filter((r) => r.id !== deleteTarget.id));
-      setSelected((prev) => {
-        const next = new Set(prev);
-        next.delete(deleteTarget.id);
-        return next;
-      });
+      await api.delete(`/api/reports/${target.id}`);
       showToast('Relatório eliminado.', 'success');
       setDeleteTarget(null);
       loadStats();
     } catch (err: any) {
+      // Reverter
+      setReports((prev) => [target, ...prev]);
       showToast(err?.response?.data?.error || 'Falha ao eliminar.', 'error');
     } finally {
       setDeleting(false);
     }
   };
 
-  // ============================================
-  // AÇÕES — Delete bulk
-  // ============================================
   const handleDeleteBulk = async () => {
     setDeleting(true);
+    const snapshot = reports;
+    const ids = Array.from(selected);
+
+    // Otimista
+    setReports((prev) => prev.filter((r) => !selected.has(r.id)));
+    setSelected(new Set());
+
     try {
-      const ids = Array.from(selected);
       await api.delete('/api/reports/bulk', {
         data: { ids },
         headers: { 'X-Confirm-Delete': 'yes' },
       });
-      setReports((prev) => prev.filter((r) => !selected.has(r.id)));
-      setSelected(new Set());
       showToast(`${ids.length} relatório(s) eliminado(s).`, 'success');
       setDeleteBulkOpen(false);
       loadStats();
     } catch (err: any) {
+      setReports(snapshot); // reverter
       showToast(err?.response?.data?.error || 'Falha ao eliminar.', 'error');
     } finally {
       setDeleting(false);
     }
   };
 
-  // ============================================
-  // AÇÕES — Delete todos
-  // ============================================
   const handleDeleteAll = async () => {
     setDeleting(true);
+    const snapshot = reports;
+
+    // Otimista
+    setReports([]);
+    setSelected(new Set());
+
     try {
       await api.delete('/api/reports', {
         headers: { 'X-Confirm-Delete': 'yes' },
       });
-      setReports([]);
-      setSelected(new Set());
       showToast('Todos os relatórios foram eliminados.', 'success');
       setDeleteAllOpen(false);
       loadStats();
     } catch (err: any) {
+      setReports(snapshot); // reverter
       showToast(err?.response?.data?.error || 'Falha ao eliminar todos.', 'error');
     } finally {
       setDeleting(false);
@@ -383,7 +605,7 @@ const Reports = () => {
   // ============================================
   return (
     <>
-      {/* Título */}
+      {/* Título + Indicador realtime */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">Relatórios & Compliance</h2>
@@ -392,6 +614,27 @@ const Reports = () => {
           </p>
         </div>
         <div className="flex items-center gap-2 self-start md:self-auto">
+          {/* Indicador realtime */}
+          <div
+            className={`px-3 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider flex items-center gap-1.5 ${
+              realtimeConnected
+                ? 'bg-[#00FF66]/10 border-[#00FF66]/40 text-[#00FF66]'
+                : 'bg-[#FFC107]/10 border-[#FFC107]/40 text-[#FFC107]'
+            }`}
+            title={
+              realtimeConnected
+                ? 'Ligado ao stream de eventos (SSE)'
+                : 'SSE indisponível — a usar polling a cada 15s'
+            }
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            {realtimeConnected ? 'REALTIME' : 'POLLING'}
+          </div>
+
           <button
             onClick={() => setDeleteAllOpen(true)}
             disabled={reports.length === 0}
@@ -619,7 +862,6 @@ const Reports = () => {
             </div>
           </div>
 
-          {/* Barra de seleção */}
           {filtered.length > 0 && (
             <div className="mt-3 pt-3 border-t border-[#1A2130] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
               <label className="flex items-center gap-2 cursor-pointer text-gray-400 hover:text-white">
@@ -704,6 +946,16 @@ const Reports = () => {
                         </div>
                         <div className="min-w-0">
                           <p className="font-semibold text-white truncate">{r.name}</p>
+                          {r.status === 'generating' && (
+                            <p className="text-[10px] font-mono text-[#FFC107] flex items-center gap-1 mt-0.5">
+                              <i className="fa-solid fa-spinner animate-spin" /> A gerar…
+                            </p>
+                          )}
+                          {r.status === 'failed' && (
+                            <p className="text-[10px] font-mono text-[#FF2E54] flex items-center gap-1 mt-0.5">
+                              <i className="fa-solid fa-circle-exclamation" /> Falhou
+                            </p>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -773,8 +1025,19 @@ const Reports = () => {
             <span className="text-white font-bold">{reports.length}</span> relatórios
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00FF66]" /> Atualizado{' '}
-            {refreshing ? 'a atualizar…' : 'agora'}
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            Última atualização:{' '}
+            <span className="text-white font-bold">
+              {refreshing
+                ? 'a atualizar…'
+                : lastUpdated
+                ? lastUpdated.toLocaleTimeString('pt-PT')
+                : '—'}
+            </span>
           </span>
         </div>
       </div>

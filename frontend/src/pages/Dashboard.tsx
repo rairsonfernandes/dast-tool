@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SeverityBadge from '@/components/dashboard/SeverityBadge';
 import Modal from '@/components/dashboard/Modal';
@@ -78,6 +78,17 @@ interface ApiScan {
   score?: number | null;
 }
 
+/**
+ * Payload recebido por SSE. O backend deve enviar JSON.
+ * Ex: { type: 'scan.completed', scanId, url, ts }
+ *     { type: 'finding.fixed', findingId, status: 'fixed' }
+ */
+interface RealtimeEvent {
+  type: string;
+  ts?: number;
+  [key: string]: any;
+}
+
 // ============================================
 // HELPERS
 // ============================================
@@ -123,10 +134,6 @@ function normalizeStatus(s: string | undefined): FindingStatus {
   return 'pending';
 }
 
-/**
- * Fallback: se o backend não devolver eventos (AuditLog vazio),
- * deriva eventos a partir dos scans recentes.
- */
 function eventsFromScans(scans: ApiScan[]): DashboardEvent[] {
   const out: DashboardEvent[] = [];
   const now = Date.now();
@@ -186,6 +193,25 @@ const STATUS_STYLE: Record<FindingStatus, { text: string; dot: string }> = {
   ignored: { text: 'text-gray-500', dot: 'bg-gray-500' },
 };
 
+/** Tipos de evento SSE que disparam refresh dos dados. */
+const REFRESH_EVENT_TYPES = new Set([
+  'scan.created',
+  'scan.started',
+  'scan.completed',
+  'scan.failed',
+  'scan.cancelled',
+  'vulnerability.created',
+  'vulnerability.updated',
+  'vulnerability.fixed',
+  'vulnerability.ignored',
+  'finding.fixed',
+  'finding.ignored',
+  'mitigation.started',
+  'mitigation.completed',
+  'mitigation.failed',
+  'audit.log',
+]);
+
 // ============================================
 // COMPONENTE
 // ============================================
@@ -200,12 +226,19 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState<'TODOS' | 'MEDIO' | 'BAIXO'>('TODOS');
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [mitigating, setMitigating] = useState(false);
+
+  // Refs para SSE e debounce de refresh
+  const sseRef = useRef<EventSource | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const loadDataRef = useRef<(isRefresh?: boolean) => Promise<void>>();
 
   // Aviso de redirect de /admin
   useEffect(() => {
@@ -218,7 +251,7 @@ const Dashboard = () => {
   }, [params, setParams, showToast]);
 
   // ============================================
-  // FETCH — stats + vulnerabilities + scans (fallback de eventos)
+  // FETCH — stats + vulnerabilities + scans
   // ============================================
   const loadData = useCallback(
     async (isRefresh = false) => {
@@ -248,8 +281,7 @@ const Dashboard = () => {
           securityScore: d.securityScore ?? null,
         });
 
-        // Eventos: prefere o que vem do backend (AuditLog).
-        // Se vazio, deriva dos scans.
+        // Eventos: prefere backend (AuditLog). Se vazio, deriva dos scans.
         let evs: DashboardEvent[] = d.recentEvents ?? [];
         if (evs.length === 0 && scansRes.status === 'fulfilled') {
           const scans = scansRes.value.data?.items ?? [];
@@ -257,7 +289,7 @@ const Dashboard = () => {
         }
         setEvents(evs);
 
-        // Vulnerabilidades
+        // Vulnerabilidades → Findings
         const items =
           vulnsRes.status === 'fulfilled' ? vulnsRes.value.data?.items ?? [] : [];
 
@@ -280,6 +312,7 @@ const Dashboard = () => {
           }));
 
         setFindings(mapped);
+        setLastUpdated(new Date());
 
         if (isRefresh) showToast('Dados atualizados.', 'success');
       } catch (err: any) {
@@ -300,6 +333,155 @@ const Dashboard = () => {
     [showToast],
   );
 
+  // Manter ref atualizada (permite usar dentro de handlers sem recriar conexões SSE)
+  loadDataRef.current = loadData;
+
+  /** Agenda refresh debounced (evita rajadas de eventos SSE). */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current != null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      loadDataRef.current?.(true);
+    }, 400);
+  }, []);
+
+  // ============================================
+  // REALTIME — SSE + fallback polling
+  // ============================================
+  useEffect(() => {
+    let disposed = false;
+    let pollTimer: number | null = null;
+
+    const startPollingFallback = () => {
+      if (pollTimer != null) return;
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          loadDataRef.current?.(false);
+        }
+      }, 15_000);
+    };
+
+    const stopPollingFallback = () => {
+      if (pollTimer != null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const connectSSE = () => {
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        startPollingFallback();
+        return;
+      }
+
+      try {
+        const es = new EventSource('/api/realtime/events');
+        sseRef.current = es;
+
+        es.onopen = () => {
+          if (disposed) return;
+          setRealtimeConnected(true);
+          stopPollingFallback();
+          // Ao (re)conectar, puxa estado fresco (pode ter perdido eventos)
+          scheduleRefresh();
+        };
+
+        es.onmessage = (evt) => {
+          if (disposed) return;
+          let payload: RealtimeEvent | null = null;
+          try {
+            payload = JSON.parse(evt.data);
+          } catch {
+            return;
+          }
+          if (!payload) return;
+
+          if (REFRESH_EVENT_TYPES.has(payload.type)) {
+            scheduleRefresh();
+
+            // Feedback imediato
+            if (payload.type === 'scan.completed') {
+              showToast('Scan concluído. A atualizar dashboard…', 'success');
+            } else if (payload.type === 'scan.failed') {
+              showToast('Um scan falhou. A atualizar dashboard…', 'error');
+            } else if (payload.type === 'mitigation.completed') {
+              showToast('Mitigação concluída.', 'success');
+            } else if (payload.type === 'mitigation.failed') {
+              showToast('Mitigação falhou.', 'error');
+            }
+          }
+
+          // Otimização local: aplica já status novo no finding (sem esperar refresh)
+          if (
+            (payload.type === 'vulnerability.updated' ||
+              payload.type === 'finding.fixed' ||
+              payload.type === 'mitigation.completed') &&
+            payload.findingId != null
+          ) {
+            const newStatus = normalizeStatus(payload.status);
+            setFindings((prev) =>
+              prev.map((f) =>
+                f.id === Number(payload!.findingId) ? { ...f, status: newStatus } : f,
+              ),
+            );
+            setSelectedFinding((prev) =>
+              prev && prev.id === Number(payload!.findingId)
+                ? { ...prev, status: newStatus }
+                : prev,
+            );
+          }
+        };
+
+        es.onerror = () => {
+          if (disposed) return;
+          setRealtimeConnected(false);
+          startPollingFallback();
+        };
+      } catch {
+        startPollingFallback();
+      }
+    };
+
+    connectSSE();
+
+    // Segurança: se SSE nunca abrir (endpoint inexistente), força polling
+    const safety = window.setTimeout(() => {
+      if (!disposed && !sseRef.current?.onopen) {
+        startPollingFallback();
+      }
+    }, 20_000);
+
+    // Revalidar ao voltar a ficar visível / focado
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadDataRef.current?.(false);
+      }
+    };
+    const onFocus = () => loadDataRef.current?.(false);
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(safety);
+      if (refreshTimerRef.current != null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      stopPollingFallback();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+    };
+  }, [scheduleRefresh, showToast]);
+
+  // Carregamento inicial
   useEffect(() => {
     loadData(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -335,13 +517,29 @@ const Dashboard = () => {
   const handleMitigate = async () => {
     if (!selectedFinding) return;
     setMitigating(true);
+
+    // Atualização otimista — reflete "Em correção" imediatamente
+    const findingId = selectedFinding.id;
+    setFindings((prev) =>
+      prev.map((f) => (f.id === findingId ? { ...f, status: 'fixing' } : f)),
+    );
+    setSelectedFinding((prev) =>
+      prev && prev.id === findingId ? { ...prev, status: 'fixing' } : prev,
+    );
+
     try {
-      await api.post(`/api/vulnerabilities/${selectedFinding.id}/fix`);
-      setAnalysisOpen(false);
+      await api.post(`/api/vulnerabilities/${findingId}/fix`);
       showToast('Fluxo de mitigação iniciado com sucesso!', 'success');
       await loadData(true);
     } catch (err: any) {
       showToast(err?.response?.data?.error || 'Falha ao iniciar mitigação.', 'error');
+      // Reverter otimismo
+      setFindings((prev) =>
+        prev.map((f) => (f.id === findingId ? { ...f, status: 'pending' } : f)),
+      );
+      setSelectedFinding((prev) =>
+        prev && prev.id === findingId ? { ...prev, status: 'pending' } : prev,
+      );
     } finally {
       setMitigating(false);
     }
@@ -382,7 +580,7 @@ const Dashboard = () => {
   // ============================================
   return (
     <>
-      {/* Título + Atualizar */}
+      {/* Título + Atualizar + Estado realtime */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">Visão Geral de Segurança</h2>
@@ -390,14 +588,37 @@ const Dashboard = () => {
             Monitorização em tempo real das ameaças e integridade dos sistemas.
           </p>
         </div>
-        <button
-          onClick={() => loadData(true)}
-          disabled={refreshing}
-          className="self-start md:self-auto px-4 py-2.5 bg-[#00FF66] text-black font-semibold text-sm rounded-lg hover:bg-[#00E676] transition-all shadow-[0_0_20px_rgba(0,255,102,0.3)] flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          <i className={`fa-solid fa-arrows-rotate ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshing ? 'A atualizar…' : 'Atualizar Dados'}
-        </button>
+        <div className="flex items-center gap-3 self-start md:self-auto">
+          {/* Indicador REALTIME / POLLING */}
+          <div
+            className={`px-3 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider flex items-center gap-1.5 ${
+              realtimeConnected
+                ? 'bg-[#00FF66]/10 border-[#00FF66]/40 text-[#00FF66]'
+                : 'bg-[#FFC107]/10 border-[#FFC107]/40 text-[#FFC107]'
+            }`}
+            title={
+              realtimeConnected
+                ? 'Ligado ao stream de eventos (SSE)'
+                : 'SSE indisponível — a usar polling a cada 15s'
+            }
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            {realtimeConnected ? 'REALTIME' : 'POLLING'}
+          </div>
+
+          <button
+            onClick={() => loadData(true)}
+            disabled={refreshing}
+            className="px-4 py-2.5 bg-[#00FF66] text-black font-semibold text-sm rounded-lg hover:bg-[#00E676] transition-all shadow-[0_0_20px_rgba(0,255,102,0.3)] flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <i className={`fa-solid fa-arrows-rotate ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'A atualizar…' : 'Atualizar Dados'}
+          </button>
+        </div>
       </div>
 
       {/* 4 METRIC CARDS */}
@@ -793,7 +1014,7 @@ const Dashboard = () => {
               <i className="fa-solid fa-terminal text-[#00FF66]" /> Eventos Recentes
             </h3>
             <span className="text-[9px] font-mono text-gray-500 bg-black/50 px-2 py-0.5 rounded border border-[#1A2130]">
-              {events.length ? 'LIVE' : 'VAZIO'}
+              {events.length ? (realtimeConnected ? 'LIVE' : 'POLL') : 'VAZIO'}
             </span>
           </div>
 
@@ -946,8 +1167,19 @@ const Dashboard = () => {
             <span className="text-white font-bold">{findings.length}</span> achados
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00FF66]" />
-            Última atualização: {refreshing ? 'a atualizar…' : 'agora'}
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                realtimeConnected ? 'bg-[#00FF66] animate-pulse' : 'bg-[#FFC107]'
+              }`}
+            />
+            Última atualização:{' '}
+            <span className="text-white font-bold">
+              {refreshing
+                ? 'a atualizar…'
+                : lastUpdated
+                ? lastUpdated.toLocaleTimeString('pt-PT')
+                : '—'}
+            </span>
           </span>
         </div>
       </div>
@@ -970,12 +1202,18 @@ const Dashboard = () => {
             </button>
             <button
               onClick={handleMitigate}
-              disabled={mitigating || selectedFinding?.status === 'fixed'}
+              disabled={
+                mitigating ||
+                selectedFinding?.status === 'fixed' ||
+                selectedFinding?.status === 'fixing'
+              }
               className="px-4 py-2 bg-[#00FF66] text-black hover:bg-[#00E676] text-xs font-mono font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(0,255,102,0.3)] disabled:opacity-50 flex items-center gap-2"
             >
               {mitigating && <i className="fa-solid fa-spinner animate-spin" />}
               {selectedFinding?.status === 'fixed'
                 ? 'Já corrigido'
+                : selectedFinding?.status === 'fixing'
+                ? 'Em correção…'
                 : mitigating
                 ? 'A mitigar…'
                 : 'Iniciar Mitigação'}
