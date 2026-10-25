@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, Response, current_app
+from sqlalchemy import func
 
 from extensions import db, limiter
 from models import User, Scan, Vulnerability
@@ -41,6 +42,30 @@ def _tenant_settings(user) -> dict:
     except Exception:
         log.debug("TenantSettings indisponível", exc_info=True)
         return {}
+
+
+def _vuln_count_for(scan_id: str) -> int:
+    """Contagem isolada (usada em detalhe/pause/resume). Nunca rebenta a rota."""
+    try:
+        return int(
+            Vulnerability.query.filter_by(scan_id=scan_id).count() or 0
+        )
+    except Exception:
+        log.exception("Falha a contar vulnerabilidades do scan %s", scan_id)
+        return 0
+
+
+def _scan_payload(scan: Scan, vuln_count: int | None = None) -> dict:
+    """
+    Serialização enriquecida e consistente para TODAS as rotas que
+    devolvem um scan. Assim o frontend nunca recebe um scan sem
+    `vulnerabilities_count`.
+    """
+    d = scan.to_dict()
+    d["vulnerabilities_count"] = (
+        int(vuln_count) if vuln_count is not None else _vuln_count_for(scan.id)
+    )
+    return d
 
 
 def _normalize_cookies(raw) -> dict[str, str]:
@@ -112,15 +137,33 @@ def _start_worker_for(
 @bp.get("")
 @require_auth
 def list_scans():
-    scans = (
-        Scan.query.filter_by(user_id=request.user_id)
+    """
+    Lista os últimos 50 scans do utilizador, com contagem de vulnerabilidades
+    agregada em UMA query (LEFT JOIN + GROUP BY) — sem N+1.
+    """
+    counts_subq = (
+        db.session.query(
+            Vulnerability.scan_id.label("scan_id"),
+            func.count(Vulnerability.id).label("vuln_count"),
+        )
+        .group_by(Vulnerability.scan_id)
+        .subquery()
+    )
+
+    rows = (
+        db.session.query(Scan, func.coalesce(counts_subq.c.vuln_count, 0))
+        .outerjoin(counts_subq, counts_subq.c.scan_id == Scan.id)
+        .filter(Scan.user_id == request.user_id)
         .order_by(Scan.created_at.desc())
         .limit(50)
         .all()
     )
+
+    items = [_scan_payload(scan, vuln_count=count) for scan, count in rows]
+
     return jsonify({
-        "items": [s.to_dict() for s in scans],
-        "total": len(scans),
+        "items": items,
+        "total": len(items),
         "page": 1,
         "limit": 50,
     })
@@ -193,7 +236,6 @@ def create_scan():
     authenticated = bool(body_options.get("authenticated", False))
     auto_report = bool(body_options.get("auto_report", toggles.get("auto-pdf", True)))
 
-    # --- NOVO: cookies e headers (top-level ou dentro de options) ---
     raw_cookies = data.get("cookies") or body_options.get("cookies") or ""
     cookies = _normalize_cookies(raw_cookies)
     raw_headers = data.get("headers") or body_options.get("headers") or {}
@@ -243,7 +285,7 @@ def create_scan():
         return jsonify({"error": "Falha ao arrancar scanner."}), 500
 
     db.session.refresh(scan)
-    return jsonify(scan.to_dict()), 201
+    return jsonify(_scan_payload(scan, vuln_count=0)), 201
 
 
 # ============================================================
@@ -310,7 +352,7 @@ def get_scan(scan_id):
     scan = Scan.query.filter_by(id=scan_id, user_id=request.user_id).first()
     if not scan:
         return jsonify({"error": "Scan não encontrado."}), 404
-    return jsonify(scan.to_dict())
+    return jsonify(_scan_payload(scan))
 
 
 @bp.get("/<scan_id>/vulnerabilities")
@@ -338,7 +380,7 @@ def pause_scan(scan_id):
     scan.status = "paused"
     db.session.commit()
     audit("scan.pause", scan_id=scan.id)
-    return jsonify(scan.to_dict())
+    return jsonify(_scan_payload(scan))
 
 
 @bp.post("/<scan_id>/resume")
@@ -374,8 +416,6 @@ def resume_scan(scan_id):
     crawl = bool(toggles.get("crawl", True))
     auto_report = bool(toggles.get("auto-pdf", True))
 
-    # Nota: no resume, cookies/headers não são recuperados (não persistimos).
-    # O utilizador terá de criar um novo scan se precisar de auth.
     try:
         _start_worker_for(scan, user, depth, rate_limit, crawl, False, auto_report)
     except Exception:
@@ -386,7 +426,7 @@ def resume_scan(scan_id):
         return jsonify({"error": "Falha ao retomar scanner."}), 500
 
     db.session.refresh(scan)
-    return jsonify(scan.to_dict())
+    return jsonify(_scan_payload(scan))
 
 
 @bp.delete("/<scan_id>")

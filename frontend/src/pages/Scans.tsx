@@ -19,6 +19,7 @@ interface ApiScan {
   progress?: number;
   created_at: string;
   duration_seconds?: number | null;
+  vulnerabilities_count?: number;
   result?: { vulnerabilities?: { severity?: string; type?: string; description?: string }[] } | null;
 }
 
@@ -149,9 +150,9 @@ const Scans = () => {
   const refreshAllRef = useRef<(silent?: boolean) => Promise<void>>();
 
   // ============================================
-  // FETCH
+  // MAP — backend tem prioridade; fallback para compatibilidade
   // ============================================
-  const mapScan = (s: ApiScan): ScanRow => ({
+  const mapScan = useCallback((s: ApiScan): ScanRow => ({
     id: s.id,
     target: hostOf(s.target_url || s.url),
     url: s.target_url || s.url,
@@ -160,9 +161,15 @@ const Scans = () => {
     date: fmtDate(s.created_at),
     score: s.score ?? null,
     progress: s.progress ?? 0,
-    vulnCount: s.result?.vulnerabilities?.length ?? 0,
-  });
+    vulnCount:
+      typeof s.vulnerabilities_count === 'number'
+        ? s.vulnerabilities_count
+        : s.result?.vulnerabilities?.length ?? 0,
+  }), []);
 
+  // ============================================
+  // FETCH
+  // ============================================
   const fetchScans = useCallback(async () => {
     try {
       const { data } = await api.get<ApiScan[] | { items: ApiScan[] }>('/api/scans');
@@ -172,7 +179,7 @@ const Scans = () => {
       console.warn('[Scans] falha a listar scans:', err);
       setScans([]);
     }
-  }, []);
+  }, [mapScan]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -313,7 +320,7 @@ const Scans = () => {
               }
             }
 
-            // Concluído / falhou → atualiza estado + score/vulns locais antes do refresh
+            // Concluído / falhou → atualiza estado + score + contagem
             if (payload.type === 'scan.completed' || payload.type === 'scan.failed') {
               setScans((prev) =>
                 prev.map((s) =>
@@ -323,6 +330,10 @@ const Scans = () => {
                         status: payload!.type === 'scan.completed' ? 'completed' : 'failed',
                         score: payload!.score ?? s.score,
                         progress: 100,
+                        vulnCount:
+                          typeof payload!.vulnerabilities_count === 'number'
+                            ? payload!.vulnerabilities_count
+                            : s.vulnCount,
                       }
                     : s,
                 ),
@@ -332,6 +343,22 @@ const Scans = () => {
               } else {
                 showToast(`Scan falhou${payload.url ? ` — ${hostOf(payload.url)}` : ''}.`, 'error');
               }
+            }
+
+            // Nova vulnerabilidade → incrementa contagem local
+            if (
+              (payload.type === 'vulnerability.created' ||
+                payload.type === 'vulnerability.updated' ||
+                payload.type === 'mitigation.completed') &&
+              typeof payload.count === 'number'
+            ) {
+              setScans((prev) =>
+                prev.map((s) =>
+                  s.id === scanId
+                    ? { ...s, vulnCount: payload!.count as number }
+                    : s,
+                ),
+              );
             }
 
             // Removido → retira da lista imediatamente
@@ -474,13 +501,9 @@ const Scans = () => {
 
     try {
       const { data } = await api.post<ApiScan>(`/api/scans/${scan.id}/${endpoint}`);
-      setScans((prev) =>
-        prev.map((s) =>
-          s.id === scan.id
-            ? { ...s, status: data.status ?? optimisticStatus }
-            : s,
-        ),
-      );
+      // Backend devolve o scan completo (incluindo vulnerabilities_count)
+      const mapped = mapScan(data);
+      setScans((prev) => prev.map((s) => (s.id === scan.id ? mapped : s)));
       showToast(isPaused ? 'Scan retomado.' : 'Scan pausado.', isPaused ? 'success' : 'info');
       fetchStats();
     } catch (err: any) {

@@ -51,7 +51,6 @@ interface ApiVuln {
   status?: string;
 }
 
-/** Payload SSE. Ex: { type: 'scan.progress', scanId, progress } */
 interface RealtimeEvent {
   type: string;
   ts?: number;
@@ -111,7 +110,6 @@ function fmtDateTime(iso?: string | null): string {
   }
 }
 
-/** Eventos SSE relevantes para esta página. */
 const REFRESH_EVENT_TYPES = new Set([
   'scan.started',
   'scan.progress',
@@ -148,7 +146,6 @@ const ScanDetail = () => {
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
 
-  // Refs realtime
   const sseRef = useRef<EventSource | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const loadRef = useRef<() => Promise<void>>();
@@ -196,7 +193,6 @@ const ScanDetail = () => {
 
   loadRef.current = load;
 
-  /** Refresh debounced (evita rajadas SSE). */
   const scheduleRefresh = useCallback(() => {
     if (refreshTimerRef.current != null) {
       window.clearTimeout(refreshTimerRef.current);
@@ -207,7 +203,6 @@ const ScanDetail = () => {
     }, 300);
   }, []);
 
-  // Carga inicial
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -224,7 +219,6 @@ const ScanDetail = () => {
 
     const startPollingFallback = () => {
       if (pollTimer != null) return;
-      // 5s: agressivo, porque queremos ver progresso do scan ao vivo
       pollTimer = window.setInterval(() => {
         if (document.visibilityState === 'visible') {
           loadRef.current?.();
@@ -269,9 +263,7 @@ const ScanDetail = () => {
           const thisScanId = String(id);
           const isThisScan = payload.scanId != null && String(payload.scanId) === thisScanId;
 
-          // ---- Otimizações locais só para ESTE scan ----
           if (isThisScan) {
-            // Progresso em tempo real (sem refresh)
             if (payload.type === 'scan.progress') {
               setScan((prev) =>
                 prev
@@ -287,7 +279,6 @@ const ScanDetail = () => {
               );
             }
 
-            // Pausa/resume/started
             if (
               payload.type === 'scan.paused' ||
               payload.type === 'scan.resumed' ||
@@ -300,7 +291,6 @@ const ScanDetail = () => {
               setScan((prev) => (prev ? { ...prev, status: newStatus } : prev));
             }
 
-            // Concluído / falhou
             if (payload.type === 'scan.completed' || payload.type === 'scan.failed') {
               setScan((prev) =>
                 prev
@@ -322,14 +312,12 @@ const ScanDetail = () => {
             }
           }
 
-          // Removido em qualquer lado → sai da página
           if (payload.type === 'scan.deleted' && isThisScan) {
             showToast('Este scan foi eliminado.', 'error');
             nav('/scans');
             return;
           }
 
-          // Vulnerabilidades do scan → pode afetar contagem/tabela
           if (
             payload.type === 'vulnerability.created' ||
             payload.type === 'vulnerability.updated' ||
@@ -341,9 +329,7 @@ const ScanDetail = () => {
             }
           }
 
-          // Qualquer evento relevante → refresh debounced
           if (REFRESH_EVENT_TYPES.has(payload.type)) {
-            // Se o evento não traz scanId, só refresca se o scan atual ainda não está terminado
             if (
               payload.scanId == null &&
               scanStatusRef.current &&
@@ -371,7 +357,6 @@ const ScanDetail = () => {
       if (!disposed && !sseRef.current) startPollingFallback();
     }, 20_000);
 
-    // Revalidar ao voltar à aba / focar
     const onVisible = () => {
       if (document.visibilityState === 'visible') loadRef.current?.();
     };
@@ -398,11 +383,13 @@ const ScanDetail = () => {
   }, [id, nav, scheduleRefresh, showToast]);
 
   // ============================================
-  // AÇÕES
+  // AÇÕES (FIX AQUI)
   // ============================================
   const handleExport = async () => {
     if (!scan) return;
     setExporting(true);
+    const API_URL = import.meta.env.VITE_API_URL || 'https://dast-tool-backend.onrender.com';
+
     try {
       const { data } = await api.post<{ id: string; download_token?: string }>('/api/reports', {
         type: 'technical',
@@ -410,9 +397,10 @@ const ScanDetail = () => {
         scan_id: scan.id,
       });
       const token = data.download_token;
+      // Constrói o URL absoluto para o Render (evita 404 no Vercel)
       const url = token
-        ? `/api/reports/${data.id}/download?token=${encodeURIComponent(token)}`
-        : `/api/reports/${data.id}/download`;
+        ? `${API_URL}/api/reports/${data.id}/download?token=${encodeURIComponent(token)}`
+        : `${API_URL}/api/reports/${data.id}/download`;
       window.open(url, '_blank');
       showToast('Relatório gerado.', 'success');
     } catch (err: any) {
@@ -428,7 +416,6 @@ const ScanDetail = () => {
     const endpoint = scan.status === 'paused' ? 'resume' : 'pause';
     const optimisticStatus: ApiScanStatus = endpoint === 'pause' ? 'paused' : 'running';
 
-    // Otimista — reflete já
     setScan((prev) => (prev ? { ...prev, status: optimisticStatus } : prev));
 
     try {
@@ -440,7 +427,6 @@ const ScanDetail = () => {
       );
       await load();
     } catch (err: any) {
-      // Reverter
       setScan((prev) => (prev ? { ...prev, status: scan.status } : prev));
       showToast(err?.response?.data?.error || 'Falha ao alterar estado.', 'error');
     } finally {
@@ -592,7 +578,6 @@ const ScanDetail = () => {
           <button onClick={() => nav('/scans')} className="px-4 py-2 bg-[#11151E] border border-[#1A2130] hover:border-[#00FF66] hover:text-[#00FF66] text-gray-300 text-xs font-mono font-bold rounded-lg flex items-center gap-2 transition-all">
             <i className="fa-solid fa-arrow-left text-[10px]" /> Voltar
           </button>
-          {/* Indicador realtime */}
           <div
             className={`px-3 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider flex items-center gap-1.5 ${
               realtimeConnected
